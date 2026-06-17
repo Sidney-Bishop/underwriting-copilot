@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# uv / venv
+.venv/
+# (uv.lock IS committed — do not ignore it)
+
+# DVC (data itself is tracked by DVC, not git; pointers .dvc ARE committed)
+/data/**
+!/data/**/.gitkeep
+!/data/**/*.dvc
+
+# Quarto (source .qmd IS tracked; rendered output and freeze cache are not)
+publications/*/_output/
+publications/*/_freeze/
+publications/*/.quarto/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

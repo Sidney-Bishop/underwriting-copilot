@@ -1,0 +1,10 @@
+# Files Graphify should NOT ingest (same syntax as .gitignore).
+.venv/
+__pycache__/
+.git/
+.dvc/
+data/
+_output/
+_freeze/
+.quarto/
+*.lock

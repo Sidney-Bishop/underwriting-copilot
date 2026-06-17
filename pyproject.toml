@@ -1,0 +1,21 @@
+[project]
+name = "underwriting-copilot"
+version = "0.1.0"
+description = "Local-first RAG copilot for reinsurance underwriting — hybrid retrieval, cited answers, and a real evaluation harness."
+requires-python = ">=3.14"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/underwriting_copilot"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+]
