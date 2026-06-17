@@ -5,19 +5,6 @@ are removed or marked closed — no growing graveyard (that's the journal's
 job). Questions resolve *into* decisions; the two files are two ends of one
 pipeline.
 
-- **Q1** — Corpus: real public regulatory documents vs. a synthetic toy
-  corpus.
-  - Status: open
-  - Notes: The spec describes internal reinsurer documents (risk appetite,
-    delegated authority matrices, ESG policies) — none of which are public.
-    Two workable paths: (a) a real public corpus drawn from PRA, EIOPA,
-    Lloyd's, and reinsurer ESG disclosures, framed as adjacent to a real
-    internal copilot; (b) a fully synthetic corpus we generate and are
-    transparent about. Real-public is harder to dismiss but introduces
-    PDF-extraction risk on day 1.
-  - Resolves into: a D-entry naming the chosen corpus and the day-1
-    fallback (per the Day 1 corpus-risk plan).
-
 - **Q2** — Orchestration framework: LangGraph vs. plain Python
   orchestration vs. DSPy.
   - Status: open
@@ -49,5 +36,34 @@ pipeline.
     deployable architecture." Cautious about cloud → local is a deliberate
     data-sovereignty design choice. The README's lead paragraph depends on
     this.
-  - Resolves into: a framing choice in the README (not a D-entry) once
-    the answer is known.
+  - Resolves into: a framing choice in the README (not a D-entry) once the
+    answer is known.
+
+- **Q5** — Topic vocabulary discipline: free-form list vs. controlled
+  vocabulary.
+  - Status: open
+  - Notes: The first metadata pass (D006) surfaced near-synonyms in the
+    topic list — `scenario_analysis` (PRA climate docs) vs.
+    `scenario_testing` (PRA operational resilience); `esg` vs.
+    `sustainability`. For retrieval this is fine — hybrid retrieval
+    handles synonyms. For *filtering* — e.g. "show me only ESG docs" —
+    synonyms split the result set. The question is whether to introduce a
+    controlled vocabulary now (six docs, easy) or defer until the corpus
+    is larger and the synonym problem is observable in eval results.
+  - Resolves into: a D-entry naming either the controlled vocabulary OR
+    the explicit deferral, with reasoning.
+
+- **Q6** — Chunker mode-detection heuristic: when does paragraph-fallback
+  kick in?
+  - Status: open
+  - Notes: D007 commits to a two-mode chunker (hierarchy-aware default,
+    paragraph-fallback for thin-structure docs). The specific detection
+    rule is unsettled. Candidate heuristics: (a) heading-density threshold
+    — `##`-or-deeper headings per N tokens; (b) post-extraction check on
+    Docling output — if any single leaf section exceeds a token threshold,
+    re-chunk that document in paragraph mode; (c) per-document explicit
+    declaration in `corpus_metadata.toml`. (b) is the most defensible
+    because it is data-driven per document, but it costs a second pass
+    over the markdown.
+  - Resolves into: a D-entry naming the heuristic and the threshold
+    values.
