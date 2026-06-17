@@ -1,0 +1,17 @@
+---
+title: "Data / Inputs"
+---
+
+::: {.callout-tip}
+**What the project consumes as input** — datasets, files, APIs, configuration,
+or anything else it depends on from the outside world. Delete this section if
+the project doesn't have meaningful inputs to describe.
+:::
+
+<!--
+prompt:
+  - What inputs does this project rely on (data, files, services, secrets)?
+  - Where do they come from, and who owns them?
+  - What does the input look like in shape, size, and quality?
+  - Are there licensing, privacy, or access constraints a reader should know?
+-->

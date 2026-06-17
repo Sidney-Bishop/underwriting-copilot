@@ -1,0 +1,31 @@
+project:
+  type: website
+  output-dir: _output
+
+website:
+  title: "underwriting-copilot"
+  description: "Local-first RAG copilot for reinsurance underwriting — hybrid retrieval, cited answers, and a real evaluation harness."
+  sidebar:
+    style: docked
+    contents:
+      - sections/01_executive_summary.qmd
+      - sections/02_introduction.qmd
+      - sections/03_dataset.qmd
+      - sections/04_methodology.qmd
+      - sections/05_experiments.qmd
+      - sections/06_results.qmd
+      - sections/07_pipeline.qmd
+      - sections/08_limitations.qmd
+      - sections/09_conclusions.qmd
+      - sections/metrics_explainer.qmd
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-fold: true
+    number-sections: false
+
+# Render the executive summary as the landing page.
+# To render: `quarto render publications/underwriting-copilot/`
+# To preview live: `quarto preview publications/underwriting-copilot/`

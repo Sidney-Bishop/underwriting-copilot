@@ -1,0 +1,20 @@
+---
+title: "Glossary & Metrics"
+---
+
+::: {.callout-tip}
+**Plain-language explanations of the terms, metrics, and acronyms** used
+elsewhere in this publication. A non-specialist reader should be able to come
+here, read one definition, and return to the main thread without losing the
+plot. Delete the section if the project doesn't use specialised vocabulary.
+:::
+
+<!--
+prompt:
+  - What terms, acronyms, or jargon does this project use that a generalist
+    wouldn't know?
+  - For each metric you report, what does it actually measure and what counts
+    as a good or bad value?
+  - Where do conventions differ (e.g. one definition in the literature, a
+    slightly different one used here)? Note the choice.
+-->

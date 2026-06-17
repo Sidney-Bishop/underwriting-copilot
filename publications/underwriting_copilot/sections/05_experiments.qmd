@@ -1,0 +1,17 @@
+---
+title: "Experiments / Trials"
+---
+
+::: {.callout-note}
+**What you actually tried, and how you set each attempt up.** This is the
+section a reader visits to understand what was tested — not yet what was found.
+Delete or repurpose if the project isn't experiment-shaped.
+:::
+
+<!--
+prompt:
+  - What did you try? Number or name each distinct experiment / trial.
+  - What was each one designed to find out, and how was success defined?
+  - What were the key parameters, configurations, or variations?
+  - What's intentionally NOT covered here (and why)?
+-->

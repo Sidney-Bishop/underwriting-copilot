@@ -1,0 +1,21 @@
+---
+title: "Limitations"
+---
+
+::: {.callout-warning}
+**Where this work falls short and what you should NOT trust it for.** Being
+candid here is what earns the rest of the document its credibility — a reader
+who sees this section take its own work seriously is more likely to trust
+everything else.
+:::
+
+<!--
+prompt:
+  - What did you NOT test, evaluate, or include? Where are the gaps?
+  - In what conditions would this approach fail, mislead, or degrade?
+  - What would you check, measure, or rule out before trusting this in
+    production / a decision / a downstream system?
+  - Are there known biases, assumptions, or shortcuts in the data, design,
+    or evaluation that a reader should keep in mind when interpreting the
+    results?
+-->

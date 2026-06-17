@@ -3,7 +3,10 @@ name = "underwriting-copilot"
 version = "0.1.0"
 description = "Local-first RAG copilot for reinsurance underwriting — hybrid retrieval, cited answers, and a real evaluation harness."
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "docling>=2.103.0",
+    "pydantic>=2.13.4",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,0 +1,92 @@
+# Corpus metadata — hand-curated.
+#
+# Keys are filenames (basename only — file may live in corpus/real/ or
+# corpus/synthetic/). Each entry is validated against DocumentMetadata
+# in src/underwriting_copilot/metadata.py.
+#
+# Conventions:
+#   - Dates without a known day-of-month use the first of the publication month.
+#   - Sustainability reports use the reporting year-end (Dec 31) as effective_date.
+#   - source_url records where we actually retrieved the document, not always
+#     the canonical publisher URL (e.g. Munich Re came via the UNEP FI mirror
+#     after the canonical munichre.com URL 404'd on 2026-06-17).
+
+["pra_ss5-25_climate_dec2025.pdf"]
+document_id = "pra_ss5-25_climate"
+title = "Supervisory Statement 5/25 – Enhancing banks' and insurers' approaches to managing climate-related risks"
+document_type = "supervisory_statement"
+issuer = "PRA"
+issuer_type = "regulator"
+jurisdiction = "UK"
+effective_date = 2025-12-01
+version = "SS5/25"
+topics = ["climate", "risk_management", "governance", "scenario_analysis", "disclosure"]
+provenance = "real"
+source_url = "https://www.bankofengland.co.uk/-/media/boe/files/prudential-regulation/supervisory-statement/2025/ss425-december-2025.pdf"
+
+["pra_ss3-19_climate_nov2024.pdf"]
+document_id = "pra_ss3-19_climate"
+title = "Supervisory Statement 3/19 – Enhancing banks' and insurers' approaches to managing the financial risks from climate change"
+document_type = "supervisory_statement"
+issuer = "PRA"
+issuer_type = "regulator"
+jurisdiction = "UK"
+effective_date = 2024-11-01
+version = "SS3/19"
+superseded_by = "SS5/25"
+topics = ["climate", "risk_management", "governance", "scenario_analysis", "disclosure"]
+provenance = "real"
+source_url = "https://www.bankofengland.co.uk/-/media/boe/files/prudential-regulation/supervisory-statement/2024/ss319-november-2024-update.pdf"
+
+["pra_ss1-21_operational_resilience.pdf"]
+document_id = "pra_ss1-21_operational_resilience"
+title = "Supervisory Statement 1/21 – Operational resilience: Impact tolerances for important business services"
+document_type = "supervisory_statement"
+issuer = "PRA"
+issuer_type = "regulator"
+jurisdiction = "UK"
+effective_date = 2021-03-01
+version = "SS1/21"
+superseded_by = "SS1/22"
+topics = ["operational_resilience", "business_continuity", "scenario_testing", "governance"]
+provenance = "real"
+source_url = "https://www.bankofengland.co.uk/-/media/boe/files/prudential-regulation/supervisory-statement/2021/ss121-march-21.pdf"
+
+["eiopa_guidelines_system_of_governance.pdf"]
+document_id = "eiopa_guidelines_system_of_governance"
+title = "Guidelines on System of Governance"
+document_type = "regulatory_guideline"
+issuer = "EIOPA"
+issuer_type = "regulator"
+jurisdiction = "EU"
+effective_date = 2014-01-01
+version = "EIOPA-BoS-14/253"
+topics = ["solvency_ii", "governance", "risk_management", "orsa", "fit_and_proper", "outsourcing"]
+provenance = "real"
+source_url = "https://www.eiopa.europa.eu/system/files/2022-10/final_en_sog_clean.pdf"
+
+["munich_re_sustainability_2023.pdf"]
+document_id = "munich_re_sustainability_2023"
+title = "Munich Re Sustainability Report 2023"
+document_type = "sustainability_report"
+issuer = "Munich Re"
+issuer_type = "reinsurer"
+jurisdiction = "Global"
+effective_date = 2023-12-31
+version = "2023"
+topics = ["esg", "climate", "sustainability", "human_rights", "governance", "diversity"]
+provenance = "real"
+source_url = "https://www.unepfi.org/wordpress/wp-content/uploads/2024/12/MunichRe-Sustainability-Report_2023.pdf"
+
+["swiss_re_sustainability_2024.pdf"]
+document_id = "swiss_re_sustainability_2024"
+title = "Swiss Re Sustainability Report 2024"
+document_type = "sustainability_report"
+issuer = "Swiss Re"
+issuer_type = "reinsurer"
+jurisdiction = "Global"
+effective_date = 2024-12-31
+version = "2024"
+topics = ["esg", "climate", "thermal_coal", "oil_and_gas", "sustainability", "net_zero", "governance"]
+provenance = "real"
+source_url = "https://www.swissre.com/dam/jcr:b17dff9d-c026-46e6-b3f9-a0839fb5ed65/2024-sustainability-report-en.pdf"

@@ -1,0 +1,18 @@
+---
+title: "Introduction"
+---
+
+::: {.callout-note}
+**Why this project exists and the context a reader needs to make sense of it.**
+Set the scene: the world or problem this project sits inside, and what was
+already known or already tried before you started.
+:::
+
+<!--
+prompt:
+  - What is the broader problem or domain this project is part of?
+  - What was the state of things before this project — what existed, what
+    didn't, what was painful?
+  - Why is this project worth doing now, in this form?
+  - What should a reader hold in mind as they read the rest of the document?
+-->

@@ -1,0 +1,18 @@
+---
+title: "How It Runs"
+---
+
+::: {.callout-tip}
+**The mechanics of running this project end to end.** A reader who wants to
+reproduce or extend the work should be able to follow this section and know
+which scripts, configs, and steps to invoke in what order.
+:::
+
+<!--
+prompt:
+  - What are the steps, in order, from raw inputs to final outputs?
+  - Which scripts, modules, or commands drive each step?
+  - What's the entry point — the one command that runs the whole thing?
+  - Are there branches in the pipeline (e.g. training vs inference, batch vs
+    on-demand) a reader should know about?
+-->

@@ -1,0 +1,18 @@
+---
+title: "Conclusions"
+---
+
+::: {.callout-note}
+**What this project amounts to and what comes next.** Pull together the
+threads — what was attempted, what was found, what it changes — and point at
+the direction of further work.
+:::
+
+<!--
+prompt:
+  - In one paragraph, what does this project conclude?
+  - What does the work change about how the problem is understood or tackled?
+  - What are the natural next steps — extensions, follow-ups, open threads?
+  - If someone read only the executive summary and these conclusions, would
+    they get the right picture? If not, what's missing?
+-->

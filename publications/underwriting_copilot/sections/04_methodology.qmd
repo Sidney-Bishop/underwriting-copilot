@@ -1,0 +1,17 @@
+---
+title: "Approach"
+---
+
+::: {.callout-tip}
+**How this project tackles the problem.** Walk a reader through the approach
+without burying them in implementation detail — pipeline.qmd is the place
+for that.
+:::
+
+<!--
+prompt:
+  - What's the overall approach in two or three sentences?
+  - What alternatives did you consider, and why did you go with this one?
+  - What assumptions does the approach rely on?
+  - What's the simplest mental model a reader could carry of how this works?
+-->

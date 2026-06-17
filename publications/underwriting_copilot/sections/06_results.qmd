@@ -1,0 +1,17 @@
+---
+title: "Results"
+---
+
+::: {.callout-note}
+**What you found.** The headline numbers, key tables or charts, and the
+honest interpretation of what they mean. Save caveats for limitations.qmd;
+this section is for what the evidence actually shows.
+:::
+
+<!--
+prompt:
+  - What's the single most important finding?
+  - What do the supporting numbers / outputs / artifacts look like?
+  - Where did the results match expectations, and where did they surprise you?
+  - What's the simplest summary table or chart that captures the outcome?
+-->
