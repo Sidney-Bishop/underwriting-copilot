@@ -233,7 +233,7 @@ format.
 ### D007 — Hierarchy-aware chunking with paragraph-fallback for thin-structure documents
 
 **Date:** 2026-06-17
-**Status:** Active
+**Status:** Superseded by D008
 
 **Context:** The section-size probe (`scripts/probes/03_section_sizes.py`)
 showed two distinct shapes in the corpus. Five of six documents have clean
@@ -275,6 +275,82 @@ will catch this.
 **When to revisit:** If the eval set reveals systematic mis-classification of
 mode, or if Docling output quality changes such that thin-structure becomes
 universal or rare.
+
+---
+
+### D008 — Chunker strategy refined: per-section fat-leaf detection
+
+**Date:** 2026-06-17
+**Status:** Active
+**Supersedes:** D007
+**Closes:** Q6
+
+**Context:** D007 committed to a two-mode chunker with mode selected
+per-document. Q6 asked the specific mode-detection heuristic. Three
+candidates were considered: (a) heading-density threshold computed
+per-document, (b) post-extraction per-section check (if a leaf section
+exceeds a token cap, re-split that section in paragraph mode),
+(c) per-document explicit declaration in `corpus_metadata.toml`.
+
+While drafting these candidates it became clear that D007's per-document
+framing was unnecessary. The two strategies (hierarchy-aware default;
+paragraph-fallback for thin sections) can be applied **per-section** rather
+than per-document, with simpler implementation and equivalent or better
+behaviour:
+
+- For PRA SS1/21, every body section individually exceeds the cap (the
+  largest is 5709 tokens), so paragraph-fallback fires document-wide — the
+  same outcome D007's per-document framing would have produced.
+- For Munich Re and Swiss Re, only the genuinely fat sections trigger
+  paragraph-fallback while the rest of the document keeps clean
+  hierarchy-aware chunking — strictly better than the all-or-nothing
+  per-document framing would have allowed.
+
+**Decision:**
+
+- The chunker always extracts sections by heading first.
+- For each extracted leaf section, apply per-section strategy:
+  - If section size **> soft cap (default 1500 tokens)**: re-split using
+    paragraph-fallback (split on numbered-paragraph patterns like
+    `^\d+\.\d+\s`; if no such pattern is found, fall back to splitting on
+    paragraph blank-lines).
+  - If section size **< soft floor (default 100 tokens)**: merge upward
+    into the parent section.
+  - Otherwise: emit the section as a single chunk.
+- Every chunk inherits the document-level metadata (D006) and gains a
+  `section_path` field recording its position in the heading hierarchy for
+  citation.
+
+**Rationale:**
+
+- Per-section is data-driven — each section's actual size decides the
+  strategy, no a-priori classification needed.
+- It collapses the implementation to one chunking pipeline with branching
+  per section, rather than two modes plus a selection layer.
+- Thresholds (1500/100) come from Probe 03's data. The corpus has a clean
+  separation: Swiss Re max is 1948, PRA SS5/25 max is 1551, no other doc
+  exceeds 1128. A 1500-token cap captures only the genuinely-fat sections
+  while leaving normal sections untouched, matching the observed ~2% cap-
+  fire rate. The 100-token floor matches the observed 46% floor-fire rate,
+  i.e. the actual chunking problem.
+
+Alternatives rejected:
+- **(a) Per-document heading-density:** vague (no notion of "page" in
+  markdown), fails on heterogeneous documents (e.g. well-structured early
+  chapters and thin later ones in the same file).
+- **(c) Metadata declaration:** moves a code judgment into hand-maintained
+  metadata; easy to forget when adding documents, invisible to readers of
+  the chunker code.
+
+**Trade-offs / risks:** Thresholds are heuristic. A document with one
+legitimate 1600-token discussion (e.g. a long preamble) would get
+unnecessarily paragraph-split. Acceptable: paragraph-split chunks are still
+citeable at finer granularity, and the eval will catch any retrieval quality
+drop. Thresholds are constructor args, so tuning is cheap.
+
+**When to revisit:** If eval shows systematic over- or under-firing of
+paragraph-fallback, or if a new document type appears with section sizes
+outside the current corpus distribution.
 
 <!-- Copy this shape for new decisions:
 

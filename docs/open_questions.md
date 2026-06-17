@@ -52,18 +52,3 @@ pipeline.
     is larger and the synonym problem is observable in eval results.
   - Resolves into: a D-entry naming either the controlled vocabulary OR
     the explicit deferral, with reasoning.
-
-- **Q6** — Chunker mode-detection heuristic: when does paragraph-fallback
-  kick in?
-  - Status: open
-  - Notes: D007 commits to a two-mode chunker (hierarchy-aware default,
-    paragraph-fallback for thin-structure docs). The specific detection
-    rule is unsettled. Candidate heuristics: (a) heading-density threshold
-    — `##`-or-deeper headings per N tokens; (b) post-extraction check on
-    Docling output — if any single leaf section exceeds a token threshold,
-    re-chunk that document in paragraph mode; (c) per-document explicit
-    declaration in `corpus_metadata.toml`. (b) is the most defensible
-    because it is data-driven per document, but it costs a second pass
-    over the markdown.
-  - Resolves into: a D-entry naming the heuristic and the threshold
-    values.
