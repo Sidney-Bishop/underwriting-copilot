@@ -33,6 +33,50 @@ grows into; prune what you don't use rather than letting it rot.
 **When to revisit:** If the standard itself changes materially, note whether
 this project should be re-aligned.
 
+---
+
+### D002 — Project named "Cedant" (codename), `underwriting-copilot` (repo)
+
+**Date:** 2026-06-17
+**Status:** Active
+
+**Context:** Public-facing portfolio project needs a name that is both
+searchable for an interviewer browsing GitHub and distinctive enough to
+remember in conversation. Two competing pressures: technical legibility
+(an interviewer skimming should immediately understand the domain) and
+domain credibility (a name that signals familiarity with the vocabulary
+of reinsurance is itself a low-effort competence signal).
+
+**Decision:** Use **"Cedant"** as the project codename in documentation,
+conversation, and the README masthead. Use **`underwriting-copilot`** as
+the GitHub repository name and the Python package name (already locked in
+`pyproject.toml`).
+
+**Rationale:** A *cedant* in reinsurance is the insurer ceding risk to
+the reinsurer — a real term of art, short, memorable, and one whose
+appearance in a project README signals domain literacy without
+explanation. `underwriting-copilot` as the repo name is immediately
+legible to a non-technical reader and searchable in a way "cedant" alone
+would not be. The two-name split gives both the SEO benefit of a
+descriptive repo URL and the distinctive shorthand for conversation.
+
+Alternatives considered and rejected:
+- `cedant` alone — too obscure as a repo name; an interviewer skimming
+  GitHub might not realise what it is.
+- `underwriting-copilot` alone — loses the domain-literacy signal and
+  reads as a generic AI side project.
+- Acronyms (`RURC`, `RUBRIC`) — read as corporate marketing rather than
+  considered design.
+
+**Trade-offs / risks:** Slight cognitive cost of carrying two names.
+Possible name collision on PyPI or with another GitHub project — should
+be checked before any package publication, though local-only use is
+unaffected.
+
+**When to revisit:** If the project is renamed for any external reason
+(employer requirement, publication, brand collision), or if the two-name
+split causes confusion in interview contexts.
+
 <!-- Copy this shape for new decisions:
 
 ### D002 — <short title>
