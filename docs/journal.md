@@ -131,6 +131,14 @@ a new entry correcting it. The wrongness is part of the record.
   is the loop; skipping the document step is what destroys projects in
   the medium term, not the short term, and that delay is exactly what
   makes it tempting to skip.
+- Nearly gitignored `publications/` on the assumption it was unused
+  project-bootstrap scaffold — caught before commit, Quarto is in. The
+  scaffold has 9 numbered sections (exec summary through conclusions,
+  plus a metrics explainer) — the eval write-up will live there as a
+  separate paper rather than a README chapter, which usefully separates
+  the polished publication artefact from the narrative documentation.
+  Lesson: don't gitignore scaffold components without confirming intent.
+  "Unused now" isn't "unwanted."
 
 <!-- Entry shape:
 
