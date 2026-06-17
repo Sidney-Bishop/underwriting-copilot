@@ -23,3 +23,4 @@ publications/*/.quarto/
 .idea/
 .vscode/
 scratch/
+graphify-out/

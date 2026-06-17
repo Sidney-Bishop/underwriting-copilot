@@ -37,3 +37,19 @@ what. In particular:
 - Treat `docs/decisions.md` and `docs/journal.md` as append-mostly: edits that
   delete large chunks are a red flag — show the diff before applying.
 - Don't run destructive commands (data deletion, force-push) without asking.
+
+## Using the codebase knowledge graph (graphify)
+
+You have access to a codebase knowledge graph via graphify (graphify-out/graph.json).
+
+Never dump or load the entire graph into context. For any codebase-structure
+question:
+1. Call a SCOPED graphify query for only the relevant subgraph/entities/paths.
+2. Use the compact output as context; do targeted file reads only if needed.
+3. Use --budget when a subgraph risks being large.
+
+Scoped commands:
+- graphify query "specific question"      -> relevant subgraph (best default)
+- graphify query "..." --budget 4000      -> cap output size
+- graphify path "NodeA" "NodeB"           -> shortest path between entities
+- graphify explain "SomeClassOrFunction"  -> natural-language node summary
