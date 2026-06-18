@@ -215,3 +215,28 @@ a new entry correcting it. The wrongness is part of the record.
 - Gremlins — the environment bug, the tooling quirk, the thing that confused
   you twice.
 -->
+
+
+## 2026-06-18 — Day 2 morning: D009, D010, first BGE-M3 sanity
+
+- Opened with `git log`, `status.md`, and the graphify rebuild log to re-orient. Eight commits from Day 1 all present. Worth noting from the graphify log: the post-commit hook fired a **semantic** rebuild last night ("Rebuilt: 201 nodes, 272 edges, 17 communities", up from 114/182/13 on Day 1) despite the original briefing implying semantic rebuilds were "manual deliberate acts." Not a problem — the graph is fresher than expected — but my reading of the briefing was incomplete. Filing this as a known unknown about the hook.
+
+- **Wrong assumption corrected (D2 first):** last night's `status.md` claimed BGE-M3 would give us "dense + sparse + ColBERT from one MLX call." Pre-flight web-search showed this is wrong — the MLX packages (`mlx-embeddings`, `mlx-embedding-models`) load BGE-M3 as a plain XLM-RoBERTa encoder, exposing **dense vectors only**. The sparse linear+ReLU head and ColBERT projection head are model-specific and only implemented in `FlagEmbedding` (PyTorch/MPS) or via ONNX runtime.
+
+- Lodged **D009**: hybrid retrieval via MLX BGE-M3 dense + classical BM25 sparse, both indexed in Qdrant, fused via RRF. Rejected: FlagEmbedding (breaks the MLX-everywhere stack; heavier deps; slower on Apple Silicon than MLX), ONNX (new ecosystem, more debugging surface for the project budget). Lodged **Q7** as the road-not-taken: if Day 3 eval shows retrieval ceiling effects, FlagEmbedding becomes a candidate for revisitation.
+
+- `uv add mlx-embeddings` pulled in 28 transitive packages, including the whole MLX ecosystem we don't actually need (mlx-lm, mlx-vlm, mlx-audio), a full async HTTP stack (aiohttp, fastapi, starlette, uvicorn), audio I/O (miniaudio, sounddevice), and `datasets`+`pyarrow`. Upstream `mlx-embeddings` has very loose dependency scoping. Accepted rather than fought. fsspec was downgraded `2026.6.0 → 2026.4.0` by uv's solver to satisfy a new transitive constraint — recorded in case any fsspec warnings appear later.
+
+- **Wrong assumption corrected (model repo):** Probe 07 initially pointed at `BAAI/bge-m3`. The download fetched 14 files at 39.3 MB total and then failed with `No safetensors found in /Users/jroche/.cache/huggingface/hub/...`. The upstream HF repo *does* contain a 2.27 GB `model.safetensors` (verified in the repo tree), but mlx-embeddings' downloader didn't pick it up — either a file-pattern filter mismatch or the snapshot the cache resolved to was an older revision without safetensors. Didn't dig further: the canonical fix is `mlx-community/bge-m3-mlx-fp16`, which is the pre-converted MLX/safetensors variant with documented mlx-embeddings usage on its model card. Lesson: a plausible HF repo path is not a guarantee your loader will fetch what you need. Verify the artifact exists in the right format under the path the loader actually downloads.
+
+- Probe 07 re-ran successfully against the pre-converted variant. Headline results:
+  - Load + 1.15 GB download: 27.8 seconds.
+  - First embed (graph build): 1.54s.
+  - Warm throughput: 0.067s/chunk. **Projected full corpus = ~31 seconds.** Re-embedding the entire corpus is essentially free — this unlocks experimentation on chunking strategies and pooling choices later in the project without a real cost penalty.
+  - Dense vector dim: 1024, matches the BGE-M3 spec.
+  - Geometry passes the smell test: PRA-to-PRA similarities highest (climate↔climate = 0.81, operational-resilience↔climate = 0.78), EIOPA↔Munich Re lowest (0.55) as expected for the most cross-domain pair (governance regulation vs. reinsurer sustainability report). The dense channel is encoding meaningful semantic structure, not noise around 0.5.
+
+- **Empirical finding (pooling — drives D010):** the probe also compared CLS-pooled + L2-normalised against `outputs.text_embeds` (which mlx-embeddings produces as mean-pooled + normalised by default for XLM-RoBERTa-family models). Cosine similarity across the five sample chunks averaged **0.687** — well below the 0.80 threshold the probe pre-declared as the "real-decision" boundary. The two strategies produce meaningfully different vectors. The BGE-M3 paper specifies CLS+L2; following the paper.
+  - **Why this matters in process terms:** mean-pooled would have shipped silently as the default if the probe hadn't included the comparison from the start. Both the mlx-embeddings library default *and* the mlx-community/bge-m3-mlx-fp16 model card example use mean pooling. Two independent upstream signals saying "use mean," one paper saying "use CLS." The probe surfaced the disagreement before it could harden into a silently sub-optimal implementation. **Building the disagreement check into the first probe — not after the first failed eval — is the lesson.**
+
+- Lodged **D010** to pin CLS+L2 pooling as the dense embedding strategy.

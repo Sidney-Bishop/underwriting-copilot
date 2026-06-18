@@ -406,3 +406,44 @@ Qdrant supports sparse vectors as a first-class type since v1.7. Keeping both ch
 - BM25 parameters: defaults (`k1=1.5`, `b=0.75`) until eval suggests tuning.
 - BM25 vocabulary computed at index time over the full corpus; query-time uses the same vocabulary.
 - Last-checked: `mlx-embeddings` v0.1.0 on PyPI (Blaizzy/mlx-embeddings), supports XLM-RoBERTa architecture which BGE-M3 derives from.
+
+
+## D010 — BGE-M3 dense embeddings use CLS-pooled + L2-normalised, not `text_embeds` mean-pooled
+
+**Date:** 2026-06-18  
+**Status:** Active
+
+### Decision
+
+For dense embeddings produced by BGE-M3 via `mlx-embeddings`, use:
+
+```python
+cls_raw = outputs.last_hidden_state[:, 0, :]            # CLS token
+vec = cls_raw / mx.linalg.norm(cls_raw, axis=-1,
+                               keepdims=True)            # L2 normalise
+```
+
+**Not** `outputs.text_embeds` (which `mlx-embeddings` produces as mean-pooled + normalised by default for XLM-RoBERTa-family models, including BGE-M3).
+
+### Rationale
+
+The BGE-M3 paper specifies CLS-token pooling with L2 normalisation as the canonical dense embedding strategy. The `mlx-embeddings` package defaults to mean pooling for XLM-RoBERTa, and the `mlx-community/bge-m3-mlx-fp16` model card example follows that default. Both would silently produce a sub-optimal embedding for BGE-M3 specifically.
+
+Probe 07 measured cosine similarity between the two pooling strategies across five chunks spanning all six corpus documents:
+
+| Chunk source | cos(cls, text_embeds) |
+|---|---|
+| EIOPA Guidelines | 0.6265 |
+| Munich Re Sustainability 2023 | 0.7391 |
+| PRA SS1/21 Operational Resilience | 0.6170 |
+| PRA SS3/19 Climate | 0.6991 |
+| PRA SS5/25 Climate | 0.7533 |
+| **mean** | **0.6870** |
+
+The probe's pre-declared interpretation thresholds: > 0.95 → pooling choice is low-stakes; < 0.80 → the choice substantively shapes the representation. **0.687 is well below the lower threshold** — the two strategies produce meaningfully different vectors. Following the BGE-M3 paper is the safe call.
+
+### Trade-offs and notes
+
+- The penalty for using `text_embeds` would be silent: retrieval would still *work*, but at lower quality than the model was tuned for. The kind of error that wouldn't surface until eval on Day 3 and might still pass eval while capping the retrieval ceiling lower than necessary.
+- Re-embedding the full corpus (~31s on the M5 Max per Probe 07) is cheap enough that this decision is revisitable if Day 3 eval surprises us.
+- The CLS+L2 logic lives in a small named helper in the forthcoming `src/underwriting_copilot/embed.py`. Unit tests pin its shape (vector dim, unit norm) so a future refactor can't silently revert to mean pooling.
