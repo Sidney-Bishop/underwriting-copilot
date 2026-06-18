@@ -572,3 +572,20 @@ a2afe76 docs: Q8 closed — SS1/21 metadata fixed, SS3/19→SS5/25 verified
 8c6d95f feat: answer.py — LLM cited-answer generation per D013
 <next commit> feat: answer.py v4 — Gemma default, env-var override, payload thinking toggle
 ```
+
+
+---
+
+## Day 3 (preliminary) follow-up — 2026-06-18 afternoon
+
+After committing the answer.py v4 work at `4f1d050`, a design conversation produced D014 and Q10. Recording here so the next session can pick up without reconstructing from chat history.
+
+**Interpretation A vs B framing.** The Day 2 N=3 finding (family axis appears more decisive than size axis on rigid-format tasks) has two interpretations the data doesn't yet distinguish: model property (A) versus prompt artifact (B). Specifically, our v1 prompt uses the literal `[chunk_id]` as both the metasyntactic variable name in the instructions AND the format the model should emit. Qwen echoed this two different ways (`[chunk_id=<real_id>]` wrapper drift on query 1, `[chunk_id_1]` placeholder collapse on query 2); Gemma was robust to it. That's a testable hypothesis rather than a settled finding.
+
+**D014 is the test.** Plain-Python eval harness, 40+ benchmark questions, 2 × 2 sweep over {Gemma, Qwen} × {prompt-v1, prompt-v2-fixed}. Falsification criterion (proposed thresholds, refinable when baseline data is in hand): if prompt-v2 closes the Qwen-Gemma gap to within 10pp on citation_accuracy AND hallucinated_citation_count drops to within 2× Gemma's, the family-axis claim gets weakened in the final Day 3 entry.
+
+**Q10 is the follow-up.** DSPy/GEPA layered on top in Day 4 or Day 5, gated on D014's results. The phasing is deliberate — plain Python first so the eval harness works regardless of DSPy integration friction, with the metric function reusable as a DSPy metric later. Three sub-questions deferred to before Phase 2: reflection LM choice (Q10.1), LiteLLM↔oMLX probe (Q10.2), text-feedback metric depth (Q10.3).
+
+**Why this isn't just "build the harness."** The harness is mandatory regardless. The novelty in today's conversation is recognising that Day 2's family-vs-size finding is a hypothesis worth specifically falsifying (or hardening) via designed prompt manipulation, and that GEPA fits naturally as a Phase 2 test of Interpretation B at its strongest. That's analytical work that would have been lost without writing it down.
+
+**Cross-project artifact still pending.** `tst_llm_journal_snippet.md` remains in `~/Downloads/`, deliberately uncommitted to Cedant. Slot it into `tst_llm/docs/journal.md` next time that project is touched. The snippet records the family-vs-size cross-project finding and its implications for tst_llm's Q21 framing.

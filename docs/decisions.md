@@ -700,3 +700,77 @@ Before the Day 3 eval harness sweep is designed:
 ### When to revisit
 
 - **Day 3 morning, before designing the eval sweep matrix.** The decision is cheap to make and cheap to reverse, but it shapes the Day 3 eval's headline finding.
+
+
+---
+
+## D014 — Day 3 eval harness design: plain Python, sweep over {models} × {prompts}
+
+**Date:** 2026-06-18
+**Status:** Decided
+
+The Day 3 eval harness is plain Python — no DSPy or other prompt-optimization framework — and measures the AnswerGenerator pipeline across a benchmark of 40+ questions with gold-standard chunks. The harness produces per-question results that are reduced to per-cell summaries across a sweep grid.
+
+**Measurement axes** (all per-question, aggregated per-cell):
+
+- `citation_accuracy` — fraction of cited chunks that are (a) in the retrieved context (already handled by `validate_citations`) AND (b) actually support the claim they're attached to. The (b) check is gold-labeled, not LLM-judged, in v1.
+- `hallucinated_citation_count` — chunk_ids cited but absent from retrieved context. Already produced by `validate_citations`.
+- `refusal_precision_recall` — for each question, gold-label whether it should be refused; measure refusal correctness against that label.
+- `latency_p50_p95` — wall-clock per question, from `AnswerResult.elapsed_seconds`.
+
+**Sweep grid for the Day 3 run.** At minimum 2 × 2:
+
+- models: `gemma-4-31B-it-MLX-6bit`, `Qwen3.6-35B-A3B-4bit` (with `enable_thinking=False`)
+- prompts: v1 (current — has the literal `[chunk_id]` placeholder name that Qwen echoed two different ways), v2 (uses `[<ID>]` metasyntax + one concrete worked example to remove the echo trap)
+
+Q9 may add a 12B-class IT model as a third row if one is pulled before the eval runs.
+
+**Why plain Python first, not DSPy.**
+
+1. The eval harness is the project's measurement infrastructure. It must work whether or not DSPy integrates cleanly with oMLX.
+2. The metric function we write here is reusable as a DSPy metric later — building it without the framework keeps measurement quality and framework quality as independent variables we can debug separately.
+3. The 2×2 sweep directly tests Interpretation A vs B (family-axis finding as model property vs prompt artifact). DSPy adds nothing to that specific question and would obscure it.
+
+**Architectural location** (initial proposal, subject to refinement at implementation time):
+
+- `eval/benchmark.toml` — benchmark questions, gold chunks, expected_refusal flags
+- `eval/scorer.py` — per-question scoring; the metric function
+- `eval/runner.py` — sweep loop over models × prompts × questions, writes per-cell JSON
+- `eval/report.py` — reduces JSON to a comparison table
+- `eval/results/<timestamp>/` — gitignored raw outputs
+
+**Falsification criterion for the family-axis finding** (per the Day 3 preliminary journal entry, proposed thresholds): if Qwen3.6 with prompt v2 closes the gap to Gemma to within 10 percentage points on `citation_accuracy` AND `hallucinated_citation_count` drops to within 2× Gemma's, the family-axis claim gets weakened or retracted in the final Day 3 journal entry. Thresholds may be refined when the harness lands and we see the shape of the baseline data.
+
+---
+
+## Q10 — DSPy/GEPA prompt optimization layer
+
+**Date:** 2026-06-18
+**Status:** OPEN
+**Phase:** Day 4–5, gated on D014 results
+
+After D014's plain-Python eval harness lands and the 2×2 sweep runs, the open question is whether to layer DSPy's GEPA optimizer on top to test whether prompt optimization can close the family-axis gap.
+
+**The hypothesis Q10 tests.** The Day 2 N=3 finding (family axis appears more decisive than size axis on rigid-format tasks) has two competing interpretations:
+
+- **Interpretation A (model property):** Qwen3.6-35B-A3B has weaker rigid-format discipline than Gemma-4-31B-it irrespective of prompt; prompt tuning helps marginally; model selection is the dominant lever.
+- **Interpretation B (prompt artifact):** Our v1 prompt has an ambiguity (the literal `[chunk_id]` placeholder name) that Gemma was robust to but Qwen exploited; with a better prompt Qwen might match Gemma.
+
+D014's 2×2 sweep gives a first answer (hand-designed v2 vs v1). GEPA goes further: rather than hand-designing v2, let GEPA's reflection LM propose prompt variants per-model and see whether any closes the gap. This tests Interpretation B at its strongest.
+
+**Phased plan.**
+
+- **Phase 1 (Day 3, D014):** Plain-Python harness + 2×2 sweep. Outcome determines whether Phase 2 is exploratory or load-bearing.
+- **Phase 2 (Day 4 or Day 5, this Q10):** Wrap `AnswerGenerator`'s prompt step as a `dspy.Module`. Reuse D014's scorer as the DSPy metric with text feedback added. Run GEPA (`auto="light"`, ~6 candidate prompts) against Qwen3.6 specifically.
+
+**Sub-questions to resolve before Phase 2.**
+
+- **Q10.1 — Reflection LM choice.** Local Gemma-4-31B-it (matches local-first pitch, weaker reflector), local Qwen3.6 with thinking on (reasoning-style models may reflect well, untested), or remote Claude/GPT-4 via API (best reflectors, breaks local-first). Default to local Gemma unless a probe shows it's too weak.
+- **Q10.2 — LiteLLM ↔ oMLX integration.** Verify LiteLLM's OpenAI-compatible client passes `extra_body.chat_template_kwargs.enable_thinking` through to oMLX correctly. 30-minute probe before any heavy commitment to DSPy.
+- **Q10.3 — Text-feedback metric depth.** Hallucinated_citation_count and refusal correctness signals are straightforward. The "you cited X but the claim about Y isn't in X" signal requires either gold-labeled claim-to-chunk alignment or an LLM judge. Defer the LLM-judge variant unless Phase 1 results suggest it would change the answer.
+
+**Resolution paths.**
+
+- If D014's prompt v2 closes the Qwen-Gemma gap (per the criterion in D014), Q10 becomes curiosity-driven. GEPA may still be worth running for Day 5 narrative ("systematic optimization beat hand-tuning") but isn't load-bearing.
+- If D014's prompt v2 does not close the gap, Q10 becomes the next honest experiment: GEPA's reflection loop is precisely the tool for finding prompts hand-iteration misses.
+- If GEPA closes the gap, Interpretation B is supported and the family-axis claim retracts. If GEPA fails to close the gap, Interpretation A is hardened — and the cross-project note delivered to `tst_llm` becomes a more confident finding too.
