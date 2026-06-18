@@ -1,0 +1,395 @@
+# Cedant Day 3 Eval Benchmark
+# ============================
+#
+# 40 questions per D014. Distribution:
+#   - 26 answerable
+#       - 7 PRA SS5/25 (climate, current)
+#       - 5 EIOPA Governance Guidelines
+#       - 5 Munich Re Sustainability Report 2023
+#       - 5 Swiss Re Sustainability Report 2024
+#       - 2 PRA SS1/21 (operational resilience)
+#       - 2 cross-document synthesis
+#   - 14 should-refuse
+#       - 6 clearly out-of-corpus topics
+#       - 4 adjacent-but-unanswered (corpus mentions but lacks specific detail)
+#       - 4 false-premise (assumes a fact not in the corpus)
+#
+# Field reference:
+#   id                  : stable identifier qNNN
+#   query               : the natural-language question
+#   expected_refusal    : true if the system should emit the refusal phrase
+#   gold_chunk_ids      : chunks that should appear in citations (empty for refusals)
+#   category            : groups questions for per-category reporting
+#   notes               : optional, used when the question's purpose is subtle
+#
+# All chunk_ids in gold_chunk_ids reconciled against scratch/qdrant
+# (461 chunks dumped via scripts/probes/dump_chunks.py). Hand-authored by
+# Claude after reading the chunk_index TSV; validation that gold_chunk_ids
+# actually exist in the index is part of the scorer's startup check.
+
+
+# =============================================================================
+# ANSWERABLE: PRA SS5/25 (climate, current supervisory statement)
+# =============================================================================
+
+[[question]]
+id = "q001"
+query = "Which entities does PRA Supervisory Statement 5/25 on climate-related risks apply to?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss5-25_climate__0005__scope"]
+category = "single_chunk_pra_climate"
+
+[[question]]
+id = "q002"
+query = "When did PRA SS5/25 commence and what previous supervisory statement does it replace?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss5-25_climate__0008__3-implementation"]
+category = "single_chunk_pra_climate"
+
+[[question]]
+id = "q003"
+query = "What are the two primary transmission channels through which climate-related risks affect firms according to the PRA?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss5-25_climate__0006__2-how-climate-related-risks-affect-firms"]
+category = "single_chunk_pra_climate"
+
+[[question]]
+id = "q004"
+query = "What three characteristics make climate-related risks distinctive and require a strategic management approach according to the PRA?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss5-25_climate__0007__characteristics-of-climate-related-risks"]
+category = "single_chunk_pra_climate"
+
+[[question]]
+id = "q005"
+query = "What does the PRA expect insurers to do for climate scenario analysis?"
+expected_refusal = false
+gold_chunk_ids = [
+  "pra_ss5-25_climate__0027__role-of-scenario-analysis",
+  "pra_ss5-25_climate__0028__scenario-selection-and-use-cases__pf00",
+  "pra_ss5-25_climate__0031__scenario-governance-controls-and-review",
+  "pra_ss5-25_climate__0049__own-risk-and-solvency-assessment-orsa",
+]
+category = "multi_chunk_pra_climate"
+notes = "Demo query carried forward from Day 2; canonical multi-chunk synthesis case."
+
+[[question]]
+id = "q006"
+query = "What does the PRA expect insurers to include in their Own Risk and Solvency Assessment regarding climate-related risks?"
+expected_refusal = false
+gold_chunk_ids = [
+  "pra_ss5-25_climate__0049__own-risk-and-solvency-assessment-orsa",
+  "pra_ss5-25_climate__0050__solvency-capital-requirement-scr",
+]
+category = "multi_chunk_pra_climate"
+
+[[question]]
+id = "q007"
+query = "How should non-life insurers approach underwriting risk in the context of climate change according to the PRA?"
+expected_refusal = false
+gold_chunk_ids = [
+  "pra_ss5-25_climate__0051__underwriting-and-reserving-risk",
+  "pra_ss5-25_climate__0048__risk-appetite",
+]
+category = "multi_chunk_pra_climate"
+
+
+# =============================================================================
+# ANSWERABLE: EIOPA Guidelines on System of Governance
+# =============================================================================
+
+[[question]]
+id = "q008"
+query = "What are the EIOPA governance requirements for fit and proper persons?"
+expected_refusal = false
+gold_chunk_ids = [
+  "eiopa_guidelines_system_of_governance__0012__guideline-11-fit-requirements",
+  "eiopa_guidelines_system_of_governance__0014__guideline-13-fit-and-proper-policies-and",
+]
+category = "multi_chunk_eiopa"
+notes = "Demo query carried forward from Day 2; canonical multi-chunk synthesis case."
+
+[[question]]
+id = "q009"
+query = "What does EIOPA require regarding outsourcing of key functions to service providers?"
+expected_refusal = false
+gold_chunk_ids = ["eiopa_guidelines_system_of_governance__0015__guideline-14-outsourcing-of-key-function"]
+category = "single_chunk_eiopa"
+
+[[question]]
+id = "q010"
+query = "According to EIOPA, what should an undertaking's liquidity risk management policy cover?"
+expected_refusal = false
+gold_chunk_ids = ["eiopa_guidelines_system_of_governance__0025__guideline-24-liquidity-risk-management-p"]
+category = "single_chunk_eiopa"
+
+[[question]]
+id = "q011"
+query = "What does EIOPA require an undertaking to assess before performing a non-routine investment activity?"
+expected_refusal = false
+gold_chunk_ids = ["eiopa_guidelines_system_of_governance__0027__guideline-26-assessment-of-non-routine-i"]
+category = "single_chunk_eiopa"
+
+[[question]]
+id = "q012"
+query = "What should an undertaking's underwriting and reserving risk management policy cover under EIOPA's Guideline 18?"
+expected_refusal = false
+gold_chunk_ids = ["eiopa_guidelines_system_of_governance__0019__guideline-18-underwriting-and-reserving"]
+category = "single_chunk_eiopa"
+
+
+# =============================================================================
+# ANSWERABLE: Munich Re Sustainability Report 2023
+# =============================================================================
+
+[[question]]
+id = "q013"
+query = "What is Munich Re's underwriting policy on new thermal coal mines and power plants?"
+expected_refusal = false
+gold_chunk_ids = ["munich_re_sustainability_2023__0053__thermal-coal"]
+category = "single_chunk_munich_re"
+
+[[question]]
+id = "q014"
+query = "What is Munich Re's position on insuring Arctic oil and gas drilling activities?"
+expected_refusal = false
+gold_chunk_ids = ["munich_re_sustainability_2023__0056__arctic-oil-and-gas"]
+category = "single_chunk_munich_re"
+
+[[question]]
+id = "q015"
+query = "When did Munich Re stop insuring single-risk single-location projects for new oil and gas fields, and what qualifies as a 'new' field?"
+expected_refusal = false
+gold_chunk_ids = ["munich_re_sustainability_2023__0054__oil-and-gas"]
+category = "single_chunk_munich_re"
+
+[[question]]
+id = "q016"
+query = "What five-step analysis has Munich Re developed to identify and analyse transition risk in underwriting?"
+expected_refusal = false
+gold_chunk_ids = ["munich_re_sustainability_2023__0149__identifying-assessing-and-responding-to"]
+category = "single_chunk_munich_re"
+
+[[question]]
+id = "q017"
+query = "What has Munich Re committed to regarding net-zero emissions in its underwriting portfolio, and what is the role of the Climate Ambition 2025?"
+expected_refusal = false
+gold_chunk_ids = [
+  "munich_re_sustainability_2023__0150__decarbonisation-targets-and-metrics",
+  "munich_re_sustainability_2023__0153__liabilities",
+]
+category = "multi_chunk_munich_re"
+
+
+# =============================================================================
+# ANSWERABLE: Swiss Re Sustainability Report 2024
+# =============================================================================
+
+[[question]]
+id = "q018"
+query = "What is Swiss Re's Climate Transition Plan and what does it describe?"
+expected_refusal = false
+gold_chunk_ids = ["swiss_re_sustainability_2024__0049__climate-transition-plan"]
+category = "single_chunk_swiss_re"
+
+[[question]]
+id = "q019"
+query = "What thresholds does Swiss Re's Thermal Coal Policy apply for single-risk business?"
+expected_refusal = false
+gold_chunk_ids = ["swiss_re_sustainability_2024__0138__approach-in-underwriting"]
+category = "single_chunk_swiss_re"
+
+[[question]]
+id = "q020"
+query = "Which oil and gas companies does Swiss Re decline to support for single-risk re/insurance transactions?"
+expected_refusal = false
+gold_chunk_ids = ["swiss_re_sustainability_2024__0135__approach-in-underwriting"]
+category = "single_chunk_swiss_re"
+
+[[question]]
+id = "q021"
+query = "What is the structure of Swiss Re's ESG Risk Framework — how many umbrella guidelines and how many sector-specific policies?"
+expected_refusal = false
+gold_chunk_ids = ["swiss_re_sustainability_2024__0124__umbrella-guidelines-and-sector-specific"]
+category = "single_chunk_swiss_re"
+
+[[question]]
+id = "q022"
+query = "How does Swiss Re's ESG risk assessment and escalation process work for underwriting transactions?"
+expected_refusal = false
+gold_chunk_ids = [
+  "swiss_re_sustainability_2024__0150__esg-risk-assessment",
+  "swiss_re_sustainability_2024__0152__esg-risk-referral-and-escalation-process",
+]
+category = "multi_chunk_swiss_re"
+
+
+# =============================================================================
+# ANSWERABLE: PRA SS1/21 Operational Resilience
+# =============================================================================
+
+[[question]]
+id = "q023"
+query = "What is an impact tolerance as defined by the PRA's Operational Resilience Parts?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss1-21_operational_resilience__0004__setting-an-impact-tolerance__pf00"]
+category = "single_chunk_pra_opres"
+
+[[question]]
+id = "q024"
+query = "What does the PRA expect from firms on operational resilience after 31 March 2025?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss1-21_operational_resilience__0006__setting-an-impact-tolerance__pf02"]
+category = "single_chunk_pra_opres"
+
+
+# =============================================================================
+# ANSWERABLE: Cross-document synthesis
+# =============================================================================
+
+[[question]]
+id = "q025"
+query = "Compare how Munich Re and Swiss Re each restrict their thermal coal underwriting activity."
+expected_refusal = false
+gold_chunk_ids = [
+  "munich_re_sustainability_2023__0053__thermal-coal",
+  "swiss_re_sustainability_2024__0138__approach-in-underwriting",
+]
+category = "cross_document"
+notes = "Cross-document comparison of two reinsurers' thermal coal policies."
+
+[[question]]
+id = "q026"
+query = "What are the common themes between EIOPA's Solvency II governance guidelines and the PRA's expectations for insurers managing climate-related risks?"
+expected_refusal = false
+gold_chunk_ids = [
+  "eiopa_guidelines_system_of_governance__0016__guideline-15-role-of-the-administrative",
+  "pra_ss5-25_climate__0047__risk-management",
+  "pra_ss5-25_climate__0048__risk-appetite",
+]
+category = "cross_document"
+notes = "Cross-document regulatory synthesis. Open-ended; gold list is anchor chunks, model may legitimately cite additional supporting chunks."
+
+
+# =============================================================================
+# SHOULD-REFUSE: Clearly out-of-corpus topics
+# =============================================================================
+
+[[question]]
+id = "q027"
+query = "What is the maximum solvency capital ratio required for a hurricane bond issuer in Bermuda?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+notes = "Demo refusal query carried forward from Day 2. Bermuda regulatory regime is entirely absent from the corpus."
+
+[[question]]
+id = "q028"
+query = "What restrictions does Lloyd's of London place on syndicates' cryptocurrency exposure?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+
+[[question]]
+id = "q029"
+query = "What is the standard pricing methodology for cyber catastrophe reinsurance treaties?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+
+[[question]]
+id = "q030"
+query = "What does the NAIC require US-domiciled reinsurers to report on hurricane exposure aggregation?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+notes = "NAIC is a US regulator; corpus contains only UK PRA and EU EIOPA material."
+
+[[question]]
+id = "q031"
+query = "What capital requirements does the China Banking and Insurance Regulatory Commission impose on foreign reinsurers operating in mainland China?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+
+[[question]]
+id = "q032"
+query = "How does the Bermuda Monetary Authority assess catastrophe bond collateralisation adequacy?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+
+
+# =============================================================================
+# SHOULD-REFUSE: Adjacent-but-unanswered (corpus mentions topic but lacks
+# the specific detail being asked for)
+# =============================================================================
+
+[[question]]
+id = "q033"
+query = "What specific quantitative threshold does the PRA define for 'material' climate-related risk exposure?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "Corpus discusses materiality qualitatively (proportionality, magnitude, likelihood) but does not specify a numeric threshold. Tests whether the model refuses or confabulates a number."
+
+[[question]]
+id = "q034"
+query = "What specific percentage of an undertaking's own funds does EIOPA require to be held as Tier 1 capital under Solvency II?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "Corpus EIOPA chunks discuss capital management policy structurally but do not contain Tier 1 percentage requirements (those live in the Solvency II Directive itself, not these governance guidelines)."
+
+[[question]]
+id = "q035"
+query = "What is Munich Re's specific 2030 scope 3 GHG emission reduction target for its underwriting portfolio expressed as a percentage?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "Munich Re corpus discusses Ambition 2025 milestones and 'long-term' targets but does not contain a specific numeric 2030 scope 3 underwriting target."
+
+[[question]]
+id = "q036"
+query = "What percentage of Swiss Re's executive variable compensation is tied to specific ESG performance metrics?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "Swiss Re corpus discusses governance and board ESG oversight but does not contain specific executive compensation percentages tied to ESG KPIs."
+
+
+# =============================================================================
+# SHOULD-REFUSE: False-premise (assumes a fact not in the corpus)
+# =============================================================================
+
+[[question]]
+id = "q037"
+query = "What does the PRA require firms to do under its tornado-specific underwriting supervisory statement?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_false_premise"
+notes = "No tornado-specific PRA supervisory statement exists; the false premise is that one does. Tests whether the model refuses or invents one."
+
+[[question]]
+id = "q038"
+query = "Why did Munich Re withdraw from the German primary insurance market in 2022?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_false_premise"
+notes = "Munich Re did not withdraw from the German market; ERGO is its German primary insurance subsidiary per the corpus. False premise."
+
+[[question]]
+id = "q039"
+query = "What blockchain platform does Swiss Re use for its parametric drought insurance products in Sub-Saharan Africa?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_false_premise"
+notes = "Corpus does not mention a Swiss Re blockchain platform. May or may not exist in reality; not in the corpus regardless."
+
+[[question]]
+id = "q040"
+query = "What governance requirements does EIOPA's 2024 guideline on AI model risk management impose on undertakings?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_false_premise"
+notes = "The EIOPA System of Governance guidelines in the corpus predate AI-specific governance. The 2024 AI guideline in the question is fabricated."
