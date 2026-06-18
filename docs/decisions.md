@@ -986,3 +986,88 @@ Not for the 5-day artefact. Empirical comparison across A/B/C is a v2 work-strea
 ### Cross-link to Q7
 
 Q7 (FlagEmbedding for BGE-M3 multi-functionality) was lodged on Day 2 as a possible Day 3 follow-up if retrieval hit a ceiling. Q12's investigation has now produced the empirical evidence Q7 was waiting for: there is a real retrieval ceiling, and the multi-vector channel is one of the three plausible remediations. **Q7's case is now stronger by Q13.** If v2 scoping picks Option C, Q7 closes via implementation.
+
+
+---
+
+## D015 — Production model default: gemma-4-31B-it-MLX-6bit
+
+**Date:** 2026-06-18
+**Status:** Decided
+**Resolves:** Q11
+
+The production default model for `AnswerGenerator` is
+`gemma-4-31B-it-MLX-6bit`. Override at the shell via
+`UNDERWRITING_COPILOT_MODEL` for latency-sensitive use cases that
+warrant Qwen3.6-35B-A3B-4bit's 6.1× speed advantage.
+
+### Rationale
+
+The Day 3 D014 sweep (160 cells, 0 errors) showed the two candidate
+models are equivalent on the bulk of the workload:
+
+- **Single-chunk retrievable (n=15):** both at 1.000 citation_recall.
+- **Within-document retrievable (n=21):** both at 0.929.
+- **Refusal correctness (n=14):** both at 14/14 across all 4 sweep cells.
+
+Where they differ, the data favors Gemma weakly:
+
+- **Cross-document synthesis (n=2):** Gemma 0.417 vs Qwen 0.000. Direction
+  is consistent but the sample is too small to call this robust.
+- **Hallucinations across the full 80 answerable cells:** Gemma 0,
+  Qwen 3. Both are small numbers; zero is qualitatively different from
+  low-but-nonzero for a copilot operating on regulatory content.
+
+Qwen's 6.1× latency advantage (3.4s vs 20.7s mean on answerable; 1.3s vs
+7.9s on refusal) is real. For an analyst-tool use case where queries
+arrive in research-and-refine workflows rather than real-time chat, this
+latency difference changes "essentially instant" to "slightly noticeable"
+rather than changing the workflow shape. The advantage is not weightless
+— it matters at the margin and may matter more in deployments we don't
+have visibility into — but it does not currently outweigh the small
+quality edges Gemma carries on the harder workloads.
+
+### Override pattern documented for operators
+
+The `MODEL_ENV_VAR` constant (`UNDERWRITING_COPILOT_MODEL`) was lodged in
+answer.py v4 specifically to make this override one shell command:
+
+```bash
+UNDERWRITING_COPILOT_MODEL=Qwen3.6-35B-A3B-4bit uv run python -m underwriting_copilot.answer
+```
+
+The precedence is `explicit constructor arg > env var > DEFAULT_MODEL`,
+resolved lazily inside `__init__`. The eval harness already exercises
+this — the D014 sweep used the env var to sweep both models cleanly.
+
+### What's not decided here
+
+This decision is about the **default**, not about which model wins
+unconditionally. Specifically:
+
+- **Production deployments with documented latency budgets that Qwen
+  satisfies and Gemma doesn't** should flip the env var. The default
+  optimizes for users who don't think about model choice; users who
+  think about it should configure based on context.
+- **If a future eval shows cross-document synthesis is more important
+  than current N=2 evidence suggests**, the Gemma case strengthens. If
+  v2 work (Q13) closes the retrieval-miss pattern and reshapes the
+  effective workload, the comparison should be re-run.
+- **The D014 sweep's prompt v2 is part of this decision implicitly.** v1
+  is not a production candidate for Qwen (citation_recall 0.481 vs v2's
+  0.750). The committed default in `answer.py`'s `SYSTEM_PROMPT` is
+  still v1 — see follow-up note below.
+
+### Coordination follow-up
+
+`answer.py`'s `SYSTEM_PROMPT` currently uses v1 (the original prompt with
+the `[chunk_id]` echo trap). The D014 evidence shows v2 is strictly
+better — closes 89% of the Qwen v1→v2 gap, no change to Gemma, no other
+side effects observed. The production prompt should be v2.
+
+Lodged as a small action item: copy `SYSTEM_PROMPT_V2` from
+`eval/prompts.py` over `SYSTEM_PROMPT` in `answer.py`, update the
+related tests (the existing 46 answer.py tests don't pin specific prompt
+text, so this should be drop-in), commit as a separate small feat
+landing prompt v2 as the production default. Not bundled into D015
+because it touches code; D015 is a documentation-only decision.
