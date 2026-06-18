@@ -28,6 +28,17 @@ message) was verified to NOT work on Qwen+oMLX in a sibling project
 (``Chat_summarization`` probe, 2026-06); the server-side hard switch
 does. Default ``enable_thinking=False``; harmless on non-Qwen models
 whose chat templates don't reference the kwarg.
+
+**Prompt version.** ``SYSTEM_PROMPT`` below is v2 per D014/D015. The
+Day 3 D014 sweep showed v1 (which used literal ``[chunk_id]`` as both
+the placeholder name in instructions AND the format the model should
+emit) produced systematic format-drift on Qwen3.6-style models —
+``[chunk_id=<real_id>]`` wrapper drift and ``[chunk_id_N]`` placeholder
+collapse, with 13 hallucinated placeholder citations on a single
+multi-chunk question. v2 disambiguates by explicit prohibition plus a
+concrete worked example, closing 89% of the Qwen-Gemma citation_recall
+gap on the N=26 follow-up. The original v1 text is preserved in
+``eval/prompts.py`` for historical replay of the D014 sweep.
 """
 
 from __future__ import annotations
@@ -45,12 +56,14 @@ from underwriting_copilot.retrieve import Retriever, RetrievalHit
 
 # ---- Module constants ---------------------------------------------------
 
-#: Hardcoded default model. Day 2 N=3 demo showed gemma-4-31B-it-MLX-6bit
-#: produces perfect citation-format discipline (18 valid, 0 hallucinated
-#: on query 1; 12/0 on query 2) where Qwen3.6-35B-A3B-4bit produced
-#: format drift even with enable_thinking=False (0 valid citations, 13
-#: hallucinated chunk_id placeholders on query 2). Per Q9, Day 3 eval
-#: will replicate with larger N and harder cases.
+#: Hardcoded default model per D015. Day 3 D014 sweep showed Gemma 31B
+#: and Qwen 35B-A3B produce equivalent quality on within-document
+#: workloads (both 0.929 mean citation_recall on n=21; both 1.000 on
+#: single-chunk n=15). Gemma carries small quality edges on cross-
+#: document synthesis (n=2, weakly held) and hallucination floor (0 vs
+#: 3 across the full sweep). Operators with documented latency budgets
+#: should flip via ``UNDERWRITING_COPILOT_MODEL`` — Qwen runs 6.1x
+#: faster on answerable queries.
 DEFAULT_MODEL = "gemma-4-31B-it-MLX-6bit"
 
 #: Env var that overrides ``DEFAULT_MODEL`` but loses to an explicit
@@ -89,22 +102,43 @@ REFUSAL_PHRASE = "I cannot answer this from the provided sources"
 CITATION_REGEX = re.compile(r"\[([A-Za-z0-9_\-]+)\]")
 
 
-# ---- System prompt -----------------------------------------------------
+# ---- System prompt (v2 per D014/D015) ---------------------------------
 
 #: The system prompt that instructs the LLM about citation rules and the
 #: refusal contract. Tied to ``REFUSAL_PHRASE`` and ``CITATION_REGEX``
 #: above — changes here require coordinated changes there.
+#:
+#: This is v2. The Day 3 D014 sweep (N=26 answerable questions, 2 models,
+#: 2 prompts = 80 cells per model) showed v1 produced systematic format-
+#: drift on Qwen3.6-35B-A3B: ``[chunk_id=<real_id>]`` wrapper drift and
+#: ``[chunk_id_N]`` placeholder collapse caused by the v1 prompt using
+#: the literal string ``chunk_id`` as both the placeholder name in
+#: instructions and the format token to emit. v2 disambiguates by (a)
+#: explicit prohibitions against the observed drift patterns, (b) a
+#: concrete worked example showing what a real chunk_id looks like
+#: inside the brackets. Empirical result: closed 89% of the Qwen-Gemma
+#: citation_recall gap with no change to Gemma's behaviour. v1 is
+#: preserved in ``eval/prompts.py`` for historical replay.
 SYSTEM_PROMPT = """You are an underwriting copilot for a reinsurance company. \
 You answer questions about regulatory and corporate documents using ONLY the \
 sources provided in the user message. You never use information from your \
 training data.
 
-Citation rules:
-- Every factual claim in your answer MUST be followed by a citation in the \
-exact format [chunk_id], using the chunk_id from the SOURCES section.
-- Use only chunk_ids that appear in the SOURCES section. Never invent a \
-chunk_id.
-- A single sentence may carry multiple citations: [chunk_id_1][chunk_id_2].
+Citation format:
+- Every factual claim in your answer MUST be followed by a citation in square \
+brackets containing the source's actual chunk identifier. Write the identifier \
+verbatim from the SOURCES section, with NOTHING else inside the brackets — no \
+prefix, no equals sign, no quotes, no abbreviation.
+- Worked example: if the SOURCES section lists a source as \
+[pra_ss5-25_climate__0027__role-of-scenario-analysis], cite a claim from it as \
+[pra_ss5-25_climate__0027__role-of-scenario-analysis], not as \
+[chunk_id=pra_ss5-25_climate__0027__role-of-scenario-analysis] and not as \
+[chunk_id_1] or [source_1]. The brackets contain the verbatim identifier and \
+nothing else.
+- A single sentence may carry multiple citations back-to-back: \
+[<first_identifier>][<second_identifier>].
+- Use only identifiers that appear verbatim in the SOURCES section. Never \
+invent an identifier.
 
 Refusal rule:
 - If the SOURCES do not contain enough information to answer the QUESTION, \
