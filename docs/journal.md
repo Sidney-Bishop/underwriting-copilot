@@ -267,3 +267,194 @@ a new entry correcting it. The wrongness is part of the record.
 - Performance: 0.79s warm model load (vs. 27.8s first-time in Probe 07), 0.42s for 10-chunk embed-and-upsert combined. Per-chunk cost ~42ms. Full-corpus projection: ~20s for embed-and-index together. Cheap enough to re-index iteratively while we tune.
 
 - One operational shortcut introduced in the probe that production code will need to fix: I derived `issuer_type` from a `document_id` prefix lookup table inside the probe rather than reading it from `corpus_metadata.toml` via the Pydantic model. That works because of the corpus naming convention, but it duplicates knowledge the metadata schema already encodes. `embed.py` / `index.py` should read `issuer_type` from the metadata model directly. Logging this as a known shortcut to fix, not a bug.
+
+
+---
+
+# Day 2 — 2026-06-18
+
+## Where we started
+
+End of Day 1: six real PDFs cleaned and chunked into 461 chunks under `scratch/chunks/`, all 60-then-61 unit tests green, D001–D008 closed, corpus_metadata.toml hand-curated. The Day 1 status.md promised that Day 2 would use BGE-M3 to get "dense + sparse + ColBERT from one MLX call". That promise turned out to be wrong, and the day opened with that finding.
+
+## Morning re-orient: the BGE-M3 assumption was wrong
+
+A pre-flight web search before adding `mlx-embeddings` to the dependencies showed that the two viable MLX wrappers (`mlx-embeddings` and `mlx-embedding-models`) load BGE-M3 as a plain XLM-RoBERTa encoder, exposing only the dense head. The sparse linear+ReLU head and the ColBERT projection are only available through FlagEmbedding's PyTorch/MPS path or through ONNX. Neither was in keeping with the project's MLX-everywhere lean.
+
+This collapsed into **D009**: hybrid retrieval via MLX BGE-M3 dense + classical BM25 sparse, both stored in Qdrant, fused at query time via Reciprocal Rank Fusion. The FlagEmbedding road-not-taken was lodged as **Q7** with explicit resolution criteria — if Day 3 eval shows a retrieval ceiling, revisit.
+
+Honest moment: the previous evening's status.md had been written confidently about a setup the morning's reading immediately disproved. The fix was cheap because the discipline of "decisions before code" caught it — no code had been written against the wrong assumption.
+
+## Probe 07: BGE-M3 sanity, with a model-repo gotcha
+
+The first probe loaded BGE-M3 via `mlx-embeddings.utils.load("BAAI/bge-m3")` and embedded five chunks. The probe failed silently in a particular way: the downloader fetched 14 files totalling 39.3 MB — config and tokenizer only, no safetensors. The model existed at `BAAI/bge-m3` (the upstream repo has a 2.27 GB safetensors file) but `mlx-embeddings`' downloader didn't pull it. The fix was to point at the pre-converted MLX variant `mlx-community/bge-m3-mlx-fp16`, which has both an mlx-embeddings-friendly file layout and documented usage on the model card.
+
+With the right model loaded, Probe 07 confirmed:
+
+- Dim 1024 ✓
+- Cold load 27.8s, warm load 0.79s
+- Warm embed 0.067s/chunk (would prove optimistic later, see embed.py)
+- Geometry sensible: PRA-to-PRA chunk similarities highest (climate↔climate 0.81, operational↔climate 0.78); EIOPA↔Munich Re lowest (0.55)
+
+The other finding from Probe 07 was a **substantive correction to default pooling**. `mlx-embeddings` returns an `outputs` object with both `last_hidden_state` (which can be CLS-pooled) and `text_embeds` (which is mean-pooled by default for XLM-RoBERTa-family models). The cosine similarity between CLS-pooled and mean-pooled across the five sample chunks averaged 0.687 — well below the low-stakes 0.80 threshold. Going with mean-pooled would have been a silent ~30% pooling-mismatch with what the BGE-M3 paper recommends.
+
+This became **D010**: CLS-token + L2-normalisation, exported as `cls_l2_pool()` from `embed.py` so that `retrieve.py` uses the same pooling at query time (asymmetric pooling between index and query would silently degrade retrieval).
+
+## Probe 08: Qdrant local-mode sanity — and "the probe almost lied to us"
+
+Probe 08 verified Qdrant's local in-memory mode with named dense (1024-dim cosine) and named sparse vectors, exercised four query shapes:
+
+- (a) Dense self-retrieval — chunk 0 returns itself at 1.0000 ✓
+- (b) Sparse-only — **first run returned zero results**
+- (c) Hybrid RRF
+- (d) Payload filter on `issuer_type=regulator`
+
+The zero-result run for (b) is the day's most important finding, and it has a name now: **the probe almost lied to us**. The probe was using placeholder sparse vectors with `SPARSE_NNZ=8` (8 non-zero indices out of a 5000-element vocab). The birthday-problem math says any two such vectors have a ~1.3% probability of sharing even one index. Result: sparse queries returned nothing, the fusion code path that combines two non-empty lists was never exercised, and a casual eye would have read the test as "passed" because the dense channel did its job.
+
+The recovery was: bump `SPARSE_NNZ` from 8 to 100 (~87% pair-overlap probability), re-run, and confirm that hybrid RRF genuinely fuses two non-empty ranked lists. RRF scoring with k=60 verified empirically.
+
+Lesson pinned for the project memory: **an unexpected zero result is a finding, not a non-finding.** When a test returns nothing, the first question is whether the test was capable of returning anything. Sparsity in synthetic vectors must be sized so that the code path under test will fire in the expected percentage of cases.
+
+## D011: BM25 design before code
+
+With sparse confirmed real and dense confirmed sensible, I wrote **D011** — the BM25 channel design — before any of bm25.py.
+
+The decisions inside D011:
+
+- Tokenisation via `\b\w+\b` regex, lowercased, ~33 stopwords (bias toward keeping, e.g. negation words like "not" and "no" preserved because regulatory text leans heavily on them).
+- Porter stemming via `snowballstemmer` (pure Python, zero transitive deps).
+- BM25 parameters: k1=1.5, b=0.75 (the textbook defaults).
+- Vocab ids assigned **alphabetically** — load-bearing for reproducibility, since the ids get baked into stored sparse vectors and any re-build that produced different ids would silently invalidate the index.
+- Vocab persisted as `corpus/bm25_vocab.json` (per-corpus committed state).
+- Asymmetric sparse construction: BM25 contributions at index time, presence indicators at query time.
+
+## bm25.py: 33 tests, including the invariant
+
+The module is ~210 lines. The load-bearing test pins the asymmetric construction against a hand-computed BM25 expected value at 1e-9 relative precision:
+
+```python
+def test_inner_product_equals_hand_computed_bm25():
+    # <query_sparse, chunk_sparse> reproduces canonical BM25
+    # for a 3-document, hand-traceable corpus.
+    ...
+```
+
+If the asymmetric construction ever drifts from the textbook formula, that test fires. All 33 tests passed first run (commit `06b78b9`).
+
+## embed.py: corpus run reveals the projection drift
+
+`embed.py` ~210 lines + 14 tests, all green first run (commit `91967d0`). Module surface: `cls_l2_pool()` exported, `embed_text()` single-text path, `embed_chunks()` lazy iterator yielding `EmbeddedChunk` named tuples, `write_embeddings_jsonl()` for per-document persistence, `embed_corpus()` driver, `__main__` block.
+
+The full corpus run produced 461 dense vectors in 55.29s (`scratch/embeddings/*.jsonl`, 12 MB total). That is 0.120s/chunk — about **1.8× slower** than Probe 07's projection of 0.067s/chunk.
+
+The cause was straightforward and worth recording. Probe 07 sampled the first chunk of each document. First chunks tend to be introductions: short, thin on technical vocabulary, and quick to embed. The full corpus includes chunks up to 1500 tokens with dense regulatory text — those take longer to attend over. The mean speed across the real distribution is slower than the mean speed across "first chunks only".
+
+Mini-lesson: **projections from cherry-picked early samples bias optimistic.** Worth keeping in mind when sketching latency for retrieve and answer paths.
+
+## D012: index module design — three sub-decisions
+
+Three coupled choices before writing index.py:
+
+1. **17-field payload including the chunk text.** The lean alternative (text omitted, retrieve.py does a second-pass lookup) would save ~1 MB of payload across the collection — negligible. The simplicity win for retrieve.py (one query, no joins) is decisive at this scale.
+2. **`scratch/qdrant/` location.** Derived data, gitignored, regeneratable. The bm25_vocab.json honoured D011's choice of `corpus/` since vocab is small, text-format, and useful to commit; the Qdrant store is large and binary. Splitting them is honest.
+3. **One-shot wipe-and-rebuild.** Idempotent re-runs, no `--force` flag, no "what's currently in there" cognitive load. Day 4+ revisit if rebuild becomes slow.
+
+`issuer_type` also moved to being read from the Pydantic metadata model — fixing the prefix-lookup shortcut Probe 08 had used.
+
+## index.py: orphan check catches a real metadata coordination bug
+
+`index.py` was 349 lines + 25 tests (commit `bb125ae`). All tests passed first run, including the integration test that exercises `build_qdrant_collection` against an in-memory Qdrant.
+
+Then I ran it against the real corpus and **it failed at step 2 (orphan check)**:
+
+```
+KeyError: "Chunk 'eiopa_guidelines_system_of_governance__0001__introduction'
+references document_id 'eiopa_guidelines_system_of_governance' which is not
+in corpus_metadata.toml."
+```
+
+The orphan check did exactly what it was designed to do. Three things needed unpacking:
+
+- **What was the actual mismatch?** A diagnostic script (saved to `/tmp/diag.py` via heredoc after the terminal mangled an inline f-string with `{k!r}` — paste-history corruption, not a code bug) printed the two side-by-side. Chunks said `eiopa_guidelines_system_of_governance`; metadata keys said `eiopa_guidelines_system_of_governance.pdf`. Same pattern for Munich Re, PRA SS1/21, Swiss Re. For PRA SS3/19 and SS5/25 the date-suffix mismatched too: chunks said `pra_ss3-19_climate`, metadata said `pra_ss3-19_climate_nov2024.pdf`.
+
+- **Which side was canonical?** Reading the TOML's header comment surfaced the answer: TOML section keys are *filenames* (the on-disk identifier — files may live in `corpus/real/` or `corpus/synthetic/`), and `document_id` is a separate inner field for the logical identifier. The TOML was well-designed; my `index.py` adapter was wrong.
+
+- **What was the bug?** `_metadata_by_document_id()` had two branches: `isinstance(corpus_metadata, dict)` passed through unchanged; otherwise it built a dict from the list. The dict branch's "pass through" assumed the dict was already keyed by `document_id` — but `load_corpus_metadata()` returns a dict keyed by filename. Re-keying off the model's own `document_id` attribute regardless of input container was the fix.
+
+The patch was three lines of code plus a test rename (`test_dict_passthrough` → `test_dict_rekeyed_by_document_id`) with a docstring explaining what the test now pins. Patched in place via heredoc (not delivered as a new file — small enough), tests stayed at 25 green.
+
+Second corpus build attempt succeeded: 461 points upserted in 1.04s after 0.06s load and 0.77s BM25 build. 4810 vocab terms, avgdl=238.2 tokens/chunk. Persistence verified by reopening the collection from a fresh Python process — status green, count 461, payload sample matched D012's 17 fields exactly.
+
+Meta-lesson: **the orphan check was decisive value.** The failure happened before any data hit Qdrant. The wipe-and-rebuild contract (D012) meant the corrected re-run was a single command, no partial state to clean up. Cheap rebuilds at this scale pay for themselves in iteration cost.
+
+The committed `corpus/bm25_vocab.json` (212K, 14443 line-insertions because of JSON pretty-print) was the artefact most visible from this commit chain.
+
+## retrieve.py: hybrid retrieval lands cleanly
+
+`retrieve.py` ~280 lines + 15 tests (commit `88c4a94`). Module surface: `RetrievalHit` frozen dataclass; `reciprocal_rank_fusion()` pure function (load-bearing RRF formula pinned against hand-computed values); `_build_filter()` for the Qdrant filter construction; `Retriever` class holding BM25 vocab + Qdrant client + BGE-M3 across queries; `_demo()` running three sample queries.
+
+All 15 tests passed first run. The RRF formula test pins `1/(k+rank)` semantics at full precision for combinations of dense-only, sparse-only, and overlap cases — anything that touches the score arithmetic in the future has to keep that green.
+
+## The demo: Day 2 lands
+
+Three queries, top-5 each, 22-43ms per query after model warm-up:
+
+| Query | Top hit | Both channels? |
+|---|---|---|
+| PRA climate scenario analysis | PRA SS5/25 §4.124 ORSA | yes (dense 2, sparse 1) |
+| Operational resilience + third-party | PRA SS5/25 Op-resilience §4.43 | yes (dense 1, sparse 1) |
+| EIOPA fit and proper | EIOPA Guideline 13 | yes (dense 3, sparse 1) |
+
+All hits substantively relevant. Score range 0.0296–0.0328 — the theoretical ceiling for "both channels rank 1" is `2/61 = 0.0328`, hit exactly by query 2's top result. The math checks out.
+
+`exclude_superseded` filter working: zero hits from PRA SS3/19 across all three queries.
+
+## Q8: the demo surfaces a metadata question worth lodging
+
+Query 2 (operational resilience) had no PRA SS1/21 hits — even though SS1/21 is *the* operational resilience supervisory statement. The reason is correct filter behaviour with possibly-incorrect input data: `corpus_metadata.toml` marks SS1/21 with `superseded_by = "SS1/22"`. But SS1/22 isn't in our corpus, so the result is that the dedicated guidance is hidden by default and operational-resilience queries surface only climate-context mentions.
+
+Lodged as **Q8** with explicit sub-questions: (a) is SS1/22 a *replacement* (true supersession) or an *amendment* (additive update) of SS1/21? and (b) if it's a replacement, do we add SS1/22 to the corpus or accept the gap and document it explicitly for eval interpretation? Resolution required before Day 3 eval design — otherwise we'd be benchmarking filter behaviour rather than retrieval quality.
+
+## Meta-lessons from Day 2
+
+1. **An unexpected zero result is a finding, not a non-finding.** Probe 08's sparse-channel near-silence was a clue, not a pass.
+2. **Decisions before code keeps wrong assumptions cheap to correct.** The mlx-embeddings/BGE-M3 finding cost zero code rework.
+3. **Cherry-picked early samples bias projections optimistic.** Embed time projection was off by 1.8× because the sample was first-chunks-only.
+4. **Wipe-and-rebuild contracts make orphan-check failures cheap.** Index.py's first build failed at exactly the right point. Recovery was one patched function and one command.
+5. **Working terminals are mostly an illusion of consistency.** Paste-history corruption (the `{k!r}` → `rm -rf graphify-out ...` substitution that destroyed an inline diagnostic) shows up rarely but reliably. The fix — write the script to a file via heredoc — is cheaper than fighting the paste.
+
+## Where we stand
+
+Day 2 functional state at commit `9e64ae2` (status.md update). The retrieval pipeline runs cleanly from PDF to ranked cited chunks. 148 tests green across the repo, 87 of them added today. Q7 and Q8 open. D009–D012 active.
+
+## Day 3 plan
+
+1. Resolve Q8 (verify SS1/22 metadata semantics; either add SS1/22 to corpus or correct the field).
+2. `answer.py` — LLM cited-answer generation on top of `retrieve.py`. oMLX integration, prompt construction for citation-enforced answers, refusal logic when retrieved chunks don't answer the question.
+3. `eval/` harness — 40+ benchmark questions with gold-standard chunks. Citation accuracy, refusal precision/recall. RAGAS optional.
+
+Day 3 may spill into Day 4. The harness needs `answer.py` to score against, and `answer.py` involves real prompt engineering — neither is mechanical.
+
+## Commits today
+
+```
+a50bb04 chore: add mlx-embeddings dependency
+6a9939d docs: D009 embedding stack + Q7
+e75655c feat: probe 07 — BGE-M3 sanity
+d67c43f docs: D010 (BGE-M3 CLS+L2 pooling), journal, status
+f39f865 chore: add qdrant-client dependency
+1d346ec feat: probe 08 — Qdrant local-mode sanity
+07085f8 docs: journal + status — Probe 08 narrative
+3d74f98 docs: D011 BM25 sparse channel design
+1c5fb81 chore: add snowballstemmer dependency
+06b78b9 feat: BM25 sparse channel per D011 + 33 unit tests
+91967d0 feat: embed.py — dense embedding pipeline per D009/D010
+0bfc30c docs: D012 index module design
+bb125ae feat: index.py — Qdrant + BM25 corpus index per D012
+9de5c55 chore: commit BM25 vocab from first corpus index build
+88c4a94 feat: retrieve.py — hybrid retrieval with RRF fusion per D009
+2f576b1 docs: Q8 — does exclude_superseded leave coverage gaps?
+9e64ae2 docs: status.md — end of Day 2 state
+```
+
+Seventeen commits today. Tomorrow's first commit will be journal append for Day 2.
