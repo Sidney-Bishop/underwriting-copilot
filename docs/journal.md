@@ -589,3 +589,20 @@ After committing the answer.py v4 work at `4f1d050`, a design conversation produ
 **Why this isn't just "build the harness."** The harness is mandatory regardless. The novelty in today's conversation is recognising that Day 2's family-vs-size finding is a hypothesis worth specifically falsifying (or hardening) via designed prompt manipulation, and that GEPA fits naturally as a Phase 2 test of Interpretation B at its strongest. That's analytical work that would have been lost without writing it down.
 
 **Cross-project artifact still pending.** `tst_llm_journal_snippet.md` remains in `~/Downloads/`, deliberately uncommitted to Cedant. Slot it into `tst_llm/docs/journal.md` next time that project is touched. The snippet records the family-vs-size cross-project finding and its implications for tst_llm's Q21 framing.
+
+
+---
+
+## Day 3 (preliminary) follow-up #2 — 2026-06-18 afternoon, Q9 deferred
+
+After landing D014 + Q10 at `4079dc9`, the next concrete step was Q9: pull a 12B-class IT model to test the brief's 7-14B sweet spot hypothesis before designing the Day 3 eval sweep. Result: blocked by an upstream tooling gap. Recording as a featured finding rather than a quiet setback, because the diagnostic process is itself relevant to the interview audience.
+
+**What happened.** Pulled `mlx-community/gemma-4-12B-it-8bit` via oMLX's downloader. Failed to load with `No module named 'mlx_vlm.speculative.drafters.gemma4_unified'`. Suspected the converter, pulled `lmstudio-community/gemma-4-12B-it-MLX-8bit` (matches the naming convention of the working 31B). Same identical error. The working 31B is the same `gemma4_unified` architecture, so the issue is size-specific within oMLX's loader, not architecture-specific. Root cause not pinned from outside the source — could be speculative-drafter wiring, could be size-specific config-key handling. Either fits.
+
+**Why this is a finding worth recording prominently.** Going into Q9 the question was "does the brief's 7-14B sweet spot hypothesis hold against our family-vs-size finding?" Going out, the answer is "we cannot test this on the current stack within the project timeline." That's a different shape of answer than I expected, and it's worth being explicit that the hypothesis is **flagged-but-untested**, not rejected. Documented in Q9's closure entry with three unblocking paths considered (oMLX upgrade, upstream bug, swap to llama.cpp for the 12B row only); none pursued for the 5-day artefact.
+
+**Day 3 eval scope unchanged.** The 2×2 from D014 stands: {Gemma 4 31B IT, Qwen3.6-35B-A3B-4bit thinking-off} × {prompt-v1, prompt-v2-fixed}. No size-axis row. Family-vs-size finding from Day 2 stays preliminary and tests the family axis only; size axis goes into Q9's flagged-but-untested set.
+
+**Process correction worth noting.** My initial framing of the 12B blocker was "setback to document quietly and move on." Sibling-Claude review reframed it as "this is the kind of finding the interview audience cares about more than the model comparison itself — a Lead Generative AI role will value 'diagnosed an infrastructure gap, characterised it precisely, re-scoped the eval around it' at least as much as 'picked the right model'." Adjusting the Day 3 writeup framing accordingly. Worth recording the correction because the failure mode (quiet setback vs featured finding) is a recurring one I should watch for.
+
+**Cross-project artifact updated.** `tst_llm_journal_snippet.md` v2 in `~/Downloads/` (replaces the earlier version) — adds one sentence noting the size axis is confirmed untestable on the current oMLX 0.4.1 + mlx_vlm stack. Real infrastructure intelligence for `tst_llm`'s roster planning when it's next touched.

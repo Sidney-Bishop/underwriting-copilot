@@ -774,3 +774,40 @@ D014's 2×2 sweep gives a first answer (hand-designed v2 vs v1). GEPA goes furth
 - If D014's prompt v2 closes the Qwen-Gemma gap (per the criterion in D014), Q10 becomes curiosity-driven. GEPA may still be worth running for Day 5 narrative ("systematic optimization beat hand-tuning") but isn't load-bearing.
 - If D014's prompt v2 does not close the gap, Q10 becomes the next honest experiment: GEPA's reflection loop is precisely the tool for finding prompts hand-iteration misses.
 - If GEPA closes the gap, Interpretation B is supported and the family-axis claim retracts. If GEPA fails to close the gap, Interpretation A is hardened — and the cross-project note delivered to `tst_llm` becomes a more confident finding too.
+
+
+---
+
+## Q9 — CLOSED 2026-06-18 (DEFERRED, not RESOLVED)
+
+**Original question (re-stated for clarity):** should we pull a 7-14B-class instruction-tuned MLX model before designing the Day 3 eval sweep, to test the brief's "sweet spot" hypothesis against the 31B-class winner from Day 2's preliminary finding?
+
+**Resolution: deferred to future work.** The 7-14B sweet spot is empirically untestable on the current serving stack within the 5-day timeline.
+
+**What we tried.** Pulled `mlx-community/gemma-4-12B-it-8bit` and `lmstudio-community/gemma-4-12B-it-MLX-8bit` from HuggingFace via oMLX 0.4.1's downloader. Both downloads completed cleanly (12.4 GB each, no checksum issues). Both failed to load on the `/v1/chat/completions` endpoint with identical errors:
+
+```
+Model type gemma4_unified not supported.
+Error: No module named 'mlx_vlm.speculative.drafters.gemma4_unified'
+VLM loading failed; LLM fallback also failed.
+```
+
+The currently-working `gemma-4-31B-it-MLX-6bit` is the *same* `gemma4_unified` architecture and loads cleanly. Both failures are size-specific within oMLX's loader, not architecture-specific.
+
+**Root cause not pinned.** Two equally plausible hypotheses from outside oMLX's source:
+- Speculative-drafter wiring exists for the 31B but not the 12B in our installed `mlx_vlm` version.
+- Size-specific config-key handling (head_dim, num_kv_heads, intermediate_size scaling) hardcoded per-size and not generalised to the 12B yet.
+
+The symptom is identical under both. We did not investigate further given the project timeline.
+
+**Three unblocking paths considered (none pursued):**
+
+1. **Upgrade oMLX / mlx_vlm.** Days-long timeline plus risk of breaking the rest of the served roster. Out of scope.
+2. **File an upstream bug.** Days-to-weeks resolution timeline. Out of scope.
+3. **Swap serving backend for the 12B row only.** llama.cpp loads `gemma4_unified` GGUFs without the `mlx_vlm` dependency, and the same IT 12B is widely available as GGUF. Cost: two backends to maintain, latency comparisons confounded by backend differences. Plausible follow-up if the size-axis question becomes load-bearing in future work; not justified for the 5-day interview artefact.
+
+**Day 3 eval re-scope.** The 2×2 matrix from D014 ({Gemma 4 31B IT, Qwen3.6 35B-A3B with thinking off} × {prompt-v1, prompt-v2-fixed}) is the eval, unchanged. No size-axis row. The brief's 7-14B sweet spot hypothesis is recorded as **flagged-but-untested on this stack**, distinct from rejected.
+
+**Cleanup recorded:** broken model directories removed from `~/.lmstudio/models/`. oMLX served roster down to 12 models (was 14 transiently).
+
+**Cross-project note.** `tst_llm_journal_snippet.md` (the staging artifact for the next `tst_llm` session) updated to record that the size axis is confirmed untestable on the current oMLX 0.4.1 + mlx_vlm stack. Real infrastructure intelligence for that project's roster planning.
