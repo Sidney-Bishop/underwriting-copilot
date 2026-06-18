@@ -30,7 +30,7 @@ Honestly noted, not buried:
 
 - macOS on Apple Silicon (developed on M5 Max). The MLX dependency assumes Apple Silicon.
 - Python 3.14 via [`uv`](https://docs.astral.sh/uv/).
-- oMLX running locally on port 8000 with `gemma-4-31B-it-MLX-6bit` and (optionally) `Qwen3.6-35B-A3B-4bit` available. See `docs/serving.md` if present, or oMLX docs.
+- oMLX running locally on port 8000 with `gemma-4-31B-it-MLX-6bit` and (optionally) `Qwen3.6-35B-A3B-4bit` available.
 - ~30 GB disk for the Qdrant index and model weights.
 
 ## Quickstart
@@ -91,6 +91,8 @@ Source code in `src/underwriting_copilot/`:
 | `retrieve.py` | Hybrid dense + sparse with RRF, jurisdiction/issuer/supersession filters |
 | `answer.py` | oMLX inference, system prompt, citation validation, refusal detection |
 
+`docs/architecture.md` has the deeper version with component boundaries, data flow, and the rationale for the specific design choices (BGE-M3 over alternatives, RRF over weighted-sum fusion, the validate-citations partitioning approach).
+
 ## Evaluation
 
 The eval harness is in `eval/`. It runs a 70-question benchmark across both production-candidate models and both prompt versions (4 cells × 70 questions = 280 cells per sweep).
@@ -115,12 +117,17 @@ Single-purpose docs. Find by the *kind* of information you have, not by topic.
 
 | Document | Kind | Read it for… | Update style |
 |---|---|---|---|
+| `docs/charter.md` | State (rare) | What this project is for; scope in/out | Overwrite, seldom |
+| `docs/architecture.md` | State | How the system is built right now | Overwrite |
 | `docs/status.md` | State | Where the project is today | Overwrite |
 | `docs/governance.md` | State | Scope, contracts, decisions, output discipline | Overwrite |
 | `docs/security.md` | State | Threat model and v1 mitigations | Overwrite |
 | `docs/evaluation.md` | State | Eval methodology paired with report.md | Overwrite |
-| `docs/decisions.md` | Decision history | Choices made and why (D-IDs); open Q-IDs | Append + supersede |
+| `docs/open_questions.md` | State | Open Q-IDs (Q-state tracking) | Overwrite; resolve out |
+| `docs/decisions.md` | Decision history | Choices made and why (D-IDs) | Append + supersede |
 | `docs/journal.md` | Session history | What happened, what broke, what was retracted | Append-only, dated |
+| `docs/backlog.md` | Fluid | What might come next | Cross off when done |
+| `docs/philosophy.md` | Guide | Why the docs are structured thus | Teaches; rarely edited |
 | `corpus/synthetic/README.md` | Guide | Demo internal documents (Sycamore Re) | Overwrite |
 
 **Routing rule** — where does a sentence go? *true now* → a State doc · *a choice someone will later question* → `decisions.md` · *something that happened* → `journal.md`.
@@ -138,7 +145,7 @@ underwriting-copilot/
 ├── src/underwriting_copilot/   # pipeline modules (8 files)
 ├── eval/                       # benchmark.toml, scorer, runner, report
 ├── tests/                      # pytest — 158+ tests
-├── docs/                       # state, decision, narrative
+├── docs/                       # state, decision, narrative, guide docs
 ├── corpus/
 │   ├── *.pdf                   # 6 source PDFs (gitignored — see ingestion docs)
 │   └── synthetic/              # demo internal documents (not indexed in v1)
@@ -149,7 +156,7 @@ underwriting-copilot/
 
 - Production model default is Gemma 4 31B IT (D015). Qwen3.6 35B A3B remains available via `UNDERWRITING_COPILOT_MODEL` for latency-budgeted workloads.
 - All inference is local: no outbound network calls in steady state. The eval and pipeline are deterministic at `temperature=0`.
-- The 5-day arc produced 45 commits, two empirically-driven retractions of prior framings, and the artefact you're reading now. The journal is the unredacted version.
+- The 5-day arc produced 45+ commits, two empirically-driven retractions of prior framings, and the artefact you're reading now. The journal is the unredacted version.
 
 ## License
 
