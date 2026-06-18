@@ -600,3 +600,34 @@ Day 4+ if the corpus grows (synthetic documents per D003) and rebuild becomes sl
 - If retrieval latency on filtered queries (`issuer_type=regulator`, `superseded_by IS NULL`) exceeds a useful threshold (say >50ms p95), add Qdrant payload indexes on the filtered fields.
 - If the corpus grows past ~10× current size (4-5k chunks), revisit the wipe-and-rebuild approach in favour of incremental upserts.
 - If retrieve.py's second-pass lookup pattern (text from somewhere else) becomes useful for a reranker or a streaming demo, revisit lean payload.
+
+
+## Q8 — Does the exclude_superseded default leave coverage gaps when the successor isn't in the corpus? Is SS1/22's relationship to SS1/21 actually supersession?
+
+**Date:** 2026-06-18  
+**Status:** Open
+
+### Background
+
+D012 made `exclude_superseded=True` the default for `retrieve.py`, on the policy that surfacing legacy guidance to underwriters is risky in production. The first end-to-end demo (2026-06-18, three queries, top-5 each) confirmed the filter works as designed: zero hits from PRA SS3/19 (superseded by SS5/25 per the metadata) and zero hits from PRA SS1/21 (superseded by SS1/22 per the metadata).
+
+Two concerns surface:
+
+1. **Coverage gap in the demo corpus.** SS1/22 is not in our corpus. So by marking SS1/21 as superseded, we have hidden the only operational-resilience-dedicated document from default-mode retrieval — leaving only the brief mentions of operational resilience inside SS5/25 (climate context). Query 2 of the demo (operational resilience + third-party risk) bears this out: no SS1/21 results, and the top hits were climate-document mentions of operational resilience rather than the dedicated guidance.
+
+2. **Is "superseded_by" the right semantic for SS1/21 → SS1/22?** The metadata field implies one-document-replaces-another. PRA supervisory statements are not always replaced by their successors — sometimes a new SS *amends* or *updates* an earlier one without fully replacing it. If SS1/22 is an amendment rather than a replacement, the metadata is overstating the relationship.
+
+### Resolution criteria
+
+- **Step 1:** Verify what SS1/22 actually does to SS1/21 (Bank of England supervisory statement page lookup).
+- **Step 2A (if SS1/22 fully supersedes):** Either add SS1/22 to the corpus during Day 4/5 expansion (per D003), or accept the gap and document it explicitly in `evaluation.md` so Day 3 eval scores on operational-resilience queries are interpreted with the gap in mind.
+- **Step 2B (if SS1/22 only amends):** Change the metadata field semantics — drop `superseded_by` for SS1/21, or introduce a separate `amended_by` field that doesn't drive the `exclude_superseded` filter.
+
+### When to revisit
+
+- **Before Day 3 eval design.** If we plan benchmark queries that expect SS1/21 to surface (operational resilience, third-party risk, impact tolerances), the metadata needs to be honest first — otherwise we'll be measuring filter behaviour rather than retrieval quality.
+- **During Day 4/5 corpus expansion** if we add real-or-synthetic operational resilience material that closes the gap.
+
+### What this is not
+
+This is not a bug in `retrieve.py` or in the filter logic. The filter does exactly what D012 said it should. The question is whether the metadata feeding the filter is *factually accurate* — and whether the policy (silently hide superseded docs by default) plays well with a corpus that is not yet complete.
