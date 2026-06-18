@@ -447,3 +447,76 @@ The probe's pre-declared interpretation thresholds: > 0.95 → pooling choice is
 - The penalty for using `text_embeds` would be silent: retrieval would still *work*, but at lower quality than the model was tuned for. The kind of error that wouldn't surface until eval on Day 3 and might still pass eval while capping the retrieval ceiling lower than necessary.
 - Re-embedding the full corpus (~31s on the M5 Max per Probe 07) is cheap enough that this decision is revisitable if Day 3 eval surprises us.
 - The CLS+L2 logic lives in a small named helper in the forthcoming `src/underwriting_copilot/embed.py`. Unit tests pin its shape (vector dim, unit norm) so a future refactor can't silently revert to mean pooling.
+
+
+## D011 — BM25 sparse channel: word-level tokenisation + Porter stemming + minimal stopwords + corpus-wide vocabulary
+
+**Date:** 2026-06-18  
+**Status:** Active
+
+### Decision
+
+The sparse channel referenced in D009 is implemented as classical BM25 with these specifics:
+
+1. **Tokenisation:** word-level via regex `\b\w+\b` on lower-cased text.
+2. **Stopwords:** small hand-curated list (~30 high-frequency function words), removed before stemming.
+3. **Stemming:** Porter algorithm via the `snowballstemmer` package.
+4. **Vocabulary scope:** corpus-wide. Built once at index time from all 461 chunks, persisted as `corpus/bm25_vocab.json`.
+5. **BM25 parameters:** `k1=1.5`, `b=0.75` (canonical defaults). Tune at Day 3 eval if needed.
+6. **Implementation:** write the BM25 scorer ourselves (~50 lines), no `rank-bm25` dependency.
+
+### Sparse-vector construction
+
+Standard Qdrant pattern, nailed down here so retrieval code can be unambiguous:
+
+- **At index time** (per chunk `c` with tokens `T_c`):
+  ```
+  sparse[c] = {
+      vocab_id[t]: idf(t) * (tf(t, c) * (k1 + 1))
+                   / (tf(t, c) + k1 * (1 - b + b * |c| / avgdl))
+      for t in T_c
+  }
+  ```
+- **At query time** (query tokens `T_q`):
+  ```
+  sparse[q] = {vocab_id[t]: 1.0 for t in T_q if t in vocab}
+  ```
+- Qdrant computes the inner product between query and indexed sparse vectors — by construction, that inner product equals the BM25 score.
+
+### Why word-level tokenisation, not BGE-M3's XLM-RoBERTa subword tokenizer?
+
+Tempting because it would reuse the same vocabulary as the dense channel (~250k subwords, zero OOV, no extra dependency). Rejected because BM25's underlying intuition is "how often does this **term** appear", and subwords break that.
+
+In SentencePiece, `regulator`, `regulators`, and `regulating` tokenise into different subword sequences. BM25 would treat them as distinct terms and miss the lexical match they should obviously satisfy. The whole reason to *have* BM25 alongside dense is to capture exact-term matching that subword embeddings smooth over — using subwords for both channels collapses their distinctness.
+
+### Why Porter stemming, not full lemmatisation (spaCy / NLTK)?
+
+Regulatory text has many morphological variants where the underlying term is the same: guideline/guidelines, supervisory/supervise, test/testing/tested, climate/climatic. Without stemming, BM25 misses these matches entirely.
+
+Porter stemming is the standard, ships as a tiny pure-Python package (`snowballstemmer`, no data files), and gives ~80% of lemmatisation's benefit at ~1% of the cost. Full NLP pipelines (spaCy POS tagging + lemmatisation, NER, dependency parsing) add hundreds of MB of model weights and milliseconds per chunk for capabilities we don't need.
+
+### Why a minimal stopword list (~30 words), not NLTK's 179-word default?
+
+Aggressive stopword removal strips meaningful tokens from technical regulatory phrases like "in accordance with", "to the extent that", "subject to". These multi-word constructions carry actual regulatory meaning that lives partly in the connective words.
+
+The minimal list targets unambiguous noise (the, a, an, and, or, but, of, in, on, at, to, for, is, are, was, were, be, been, this, that, these, those, it, as, by, with, from, into, etc.). Bias when in doubt: keep the word. BM25's IDF handles common terms anyway — true noise gets near-zero IDF and contributes nothing.
+
+### Why corpus-wide vocabulary, not per-document?
+
+IDF requires global statistics: `idf(t) = log((N - df(t) + 0.5) / (df(t) + 0.5) + 1)` where `N` is the corpus size and `df(t)` is the document frequency of term `t`. Per-document vocabularies don't have a meaningful IDF — every term is "rare in this document" or "common in this document", which doesn't help retrieval.
+
+### Why roll our own BM25, not `rank-bm25`?
+
+`rank-bm25` exposes a query → top-k scoring API. We need something different: per-(term, chunk) BM25 *contributions* as sparse-vector values to upsert into Qdrant. Reimplementing the BM25 formula and its statistics-gathering pass is ~50 lines, fully unit-testable, and removes a third-party dependency from the retrieval-critical path. The wrap-around-the-library option would require post-processing internal `rank-bm25` state, which is more fragile than computing the same thing directly.
+
+### Trade-offs and notes
+
+- **Stopword bias toward inclusion** means the vocabulary will be larger than strictly necessary. Disk and memory are not a concern at our corpus scale; retrieval quality is.
+- **Vocabulary refresh:** must rebuild when the corpus changes (e.g. synthetic documents added per D003). The build step is fast (~seconds), so this is operational discipline, not architecture.
+- **BM25 parameters frozen at defaults** until eval. Resist the temptation to tune them by feel — without a ground-truth query set, parameter changes are noise.
+- **Tokenisation is asymmetric** by design: index-time builds full BM25 contributions; query-time uses presence indicators only (value 1.0 per query term). This is the canonical Qdrant BM25 pattern and matches what Qdrant's internal BM25 fastembed model does.
+
+### When to revisit
+
+- Day 3 eval — if the sparse channel underperforms expectations on the benchmark, candidates to adjust are (in order of effort): BM25 parameters, stopword list, then tokeniser (only as a last resort).
+- If synthetic documents per D003 substantially change the corpus shape (e.g. lots of new abbreviations or product names), the stopword list may need expansion.
