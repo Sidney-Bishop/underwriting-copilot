@@ -1,79 +1,121 @@
-# Status
+# underwriting-copilot — status
 
-A short, **current** snapshot. Overwrite freely; never mourn the old version.
-If this starts accumulating dated entries, it's turning into a journal — move
-that content to `journal.md` and let this snap back to a snapshot.
+**Last updated:** 2026-06-18 (end of Day 2)
+**Repo:** `/Users/jroche/Workspace/Python/underwriting-copilot`
+**Stage:** Full retrieval pipeline working end-to-end.
 
-**Done:**
-- Project scaffolded with project-bootstrap.
-- Charter, decisions D001–D010, open questions Q2–Q5 + Q7, journal entries
-  for 2026-06-17 and 2026-06-18.
-- 6 real public PDFs collected into `corpus/real/` (PRA × 3, EIOPA × 1,
-  Munich Re × 1, Swiss Re × 1).
-- Hand-curated metadata in `corpus/corpus_metadata.toml`, Pydantic-validated
-  via `src/underwriting_copilot/metadata.py`.
-- Docling installed and probed against the full corpus (~134s end-to-end
-  with OCR disabled per D004).
-- Cleanup pre-pass (`src/underwriting_copilot/cleanup.py`): image
-  placeholders stripped, repeating-table dedup, EIOPA glyph fix, PRA SS1/21
-  watermark and ss1/22-link stripping.
-- Chunker v1 (`src/underwriting_copilot/chunking.py`) per D008: hierarchy-
-  aware default, paragraph-fallback for sections > 1500 tokens, iterative
-  floor-merge for chunks < 100 tokens.
-- Unit tests: 60 tests across `test_cleanup.py` and `test_chunking.py`,
-  inline string fixtures, all green.
-- Full ingest pipeline verified end-to-end: 461 chunks across 6 documents,
-  all health checks pass. Chunks materialised in `scratch/chunks/*.jsonl`.
-- `mlx-embeddings` and `qdrant-client` dependencies added.
-- Probe 07: BGE-M3 dense channel verified via `mlx-community/bge-m3-mlx-fp16`.
-  Load 27.8s first-time / 0.79s warm, 0.067s/chunk warm (~31s projected
-  full corpus), dim 1024 matches spec, cross-document geometry sensible.
-  CLS+L2 pooling pinned via D010 after CLS-vs-text_embeds cosine sim
-  measured 0.687 (below the 0.80 low-stakes threshold).
-- Probe 08: Qdrant local-mode (in-memory) retrieval substrate verified.
-  Named dense + sparse collection schema, four queries:
-  - Dense self-retrieval (chunk 0 returns itself at 1.0000, intra-doc
-    next-best at 0.8232).
-  - Sparse-only (populated with denser placeholders).
-  - Hybrid RRF (genuinely fuses two non-empty ranked lists; ids differ
-    from either channel alone).
-  - Payload filter (`issuer_type=regulator` excludes reinsurer chunks).
-  Performance: 0.42s for 10-chunk embed+upsert combined.
+---
 
-**In progress:**
-- Day 2 production code. Probes 07 and 08 cleared the retrieval substrate;
-  next is lifting helpers into real modules.
+## Where we are
 
-**Blocked:**
-- None.
+Day 2 complete. The pipeline runs cleanly from a real PDF query to ranked, citable chunks:
 
-**Next (Day 2):**
-- Production embed module (`src/underwriting_copilot/embed.py`): lift
-  `cls_l2_pool` helper from Probe 08, batch BGE-M3 dense over all 461
-  chunks (~31s projected per Probe 07), persist alongside chunk metadata.
-  Unit tests pin pooling shape (vector dim, unit norm) so a future
-  refactor can't silently revert to mean pooling.
-- BM25 sparse channel: tokenisation, vocabulary build over the corpus,
-  sparse-vector generation per chunk. Open sub-questions: tokeniser
-  choice (BGE-M3's XLM-RoBERTa tokenizer vs. a simpler word-level
-  approach), and whether vocabulary scope is corpus-wide or per-document.
-- Production index module (`src/underwriting_copilot/index.py`):
-  persistent local Qdrant collection (file-based, not in-memory),
-  upsert all 461 chunks with both vector channels and the full
-  payload schema. `issuer_type` read from the Pydantic metadata model
-  rather than the prefix-lookup shortcut Probe 08 used.
-- Retrieval module (`src/underwriting_copilot/retrieve.py`): hybrid
-  query, RRF fusion, payload filtering by `document_id`, `issuer_type`,
-  `superseded_by IS NULL` (exclude superseded guidance), etc.
-- First end-to-end demo: query → retrieve → cited answer with refusal
-  behaviour when evidence is thin.
+```
+PDF  →  Docling extract  →  cleanup.py  →  chunking.py
+     →  scratch/chunks/ (461 chunks across 6 docs)
+     →  embed.py  →  scratch/embeddings/ (461 BGE-M3 1024-dim vectors)
+     →  index.py  →  scratch/qdrant/ + corpus/bm25_vocab.json
+     →  retrieve.py  →  hybrid dense+sparse + RRF fusion
+```
 
-**Later (Days 3–5):**
-- Cross-encoder reranker (`bge-reranker-v2-m3` on MPS).
-- Eval harness with hand-curated benchmark (40+ questions across the
-  five spec categories), RAGAS metrics, citation accuracy, refusal
-  precision / recall.
-- Synthetic-document authoring for Risk Appetite, Delegated Authority,
-  Internal Policy categories per D003.
-- README, governance.md, security.md, evaluation.md, decisions.md
-  publication pass. Polish.
+First end-to-end demo (three sample queries, top-5 each) returned plausibly relevant chunks in **22-43ms per query** after model warm-up. Filters working as designed: `exclude_superseded=True` correctly hides PRA SS3/19 and SS1/21.
+
+---
+
+## Code state
+
+### Modules (Day 2 additions)
+
+| Module | Lines | Tests | Notes |
+|---|---|---|---|
+| `bm25.py` | 210 | 33 | Invariant test pins formula at 1e-9 |
+| `embed.py` | 210 | 14 | CLS+L2 pooling pinned per D010 |
+| `index.py` | 349 | 25 | Wipe-and-rebuild; orphan check verified |
+| `retrieve.py` | 280 | 15 | RRF formula pinned vs hand-computed |
+| **Day 2 subtotal** | **~1,050** | **87** | |
+| Day 1 carry-forward | (cleanup + chunking + metadata) | 61 | |
+| **Repo total** | | **148** | All green |
+
+### Persistent artifacts
+
+| Path | Status | Tracked? |
+|---|---|---|
+| `corpus/corpus_metadata.toml` | hand-curated | ✓ |
+| `corpus/bm25_vocab.json` | 212K, 4810 terms | ✓ |
+| `scratch/chunks/*.jsonl` | 461 chunks | gitignored |
+| `scratch/embeddings/*.jsonl` | 461 vectors, ~12MB | gitignored |
+| `scratch/qdrant/` | 7.0M Qdrant store | gitignored |
+
+### Probes
+
+- 01–06: Day 1 (PDF extraction, cleanup, chunking, metadata)
+- 07: BGE-M3 sanity via mlx-embeddings (Day 2 morning)
+- 08: Qdrant local-mode sanity (Day 2 morning) — includes the "probe almost lied to us" finding around sparse-vector sparsity
+
+---
+
+## Decisions log
+
+12 decisions active (D001–D012). None superseded.
+
+**Open questions:**
+
+- **Q7** — Should we revisit FlagEmbedding/PyTorch for BGE-M3 full multi-functionality (sparse + ColBERT from one model call)?
+  *Revisit if Day 3 eval shows a retrieval ceiling.*
+
+- **Q8** — Does `exclude_superseded=True` leave coverage gaps when the successor document isn't in the corpus? Is SS1/22's relationship to SS1/21 actually supersession (replacement) or amendment (additive)?
+  *Revisit before Day 3 eval design — metadata accuracy needs to precede benchmark queries on operational resilience.*
+
+---
+
+## Day 3 plan
+
+In order:
+
+1. **Resolve Q8** — verify SS1/22 semantics; either add SS1/22 to corpus or correct the metadata field.
+2. **`answer.py`** — LLM cited-answer generation on top of `retrieve.py`. oMLX integration, prompt construction, refusal logic when retrieved chunks don't answer the question, citation enforcement (no claims without a chunk_id reference).
+3. **`eval/` harness** — 40+ benchmark questions with gold-standard chunks. Citation accuracy, refusal precision/recall. RAGAS optional — decide after seeing the harness shape.
+
+Day 3 is heavy. Realistically may spill into Day 4 if `answer.py` proves substantial. Day 5 reserves capacity for the synthetic documents per D003 and final polish (README, governance.md, security.md, evaluation.md).
+
+---
+
+## Known caveats and quirks
+
+- **Embed projection drift:** Probe 07 projected 0.067s/chunk based on first-chunks; real corpus run was 0.120s/chunk (1.8× slower) because first chunks are intro-heavy and short. Not a bug; documented in journal.
+- **Q8 coverage gap** as above — operational-resilience queries currently surface only climate-context mentions, not the dedicated SS1/21 guidance.
+- **No Qdrant payload indexes** yet (D012 deferred; add only if filter latency reveals bottlenecks).
+- **One-shot rebuild** is the current `index.py` contract. Day 4+ revisit if the corpus grows past ~10× current size.
+- **`uv add` of `mlx-embeddings` pulls 28 transitive packages** including mlx-lm, mlx-vlm, mlx-audio, fastapi, sounddevice — upstream broad scoping, accepted.
+
+---
+
+## Where to find what
+
+- Source: `src/underwriting_copilot/`
+- Tests: `tests/`
+- Probes: `scripts/probes/`
+- Decisions and open questions: `docs/decisions.md`
+- State docs (overwrite freely): `docs/charter.md`, `docs/status.md` (this file), `docs/architecture.md`
+- Journal (append-only): `docs/journal.md`
+- Real PDFs: `corpus/real/`
+- Hand-curated metadata: `corpus/corpus_metadata.toml`
+- Committed derived state: `corpus/bm25_vocab.json`
+- Gitignored derived artifacts: `scratch/`
+
+---
+
+## How to reproduce from scratch
+
+```bash
+# 1. PDFs already in corpus/real/, metadata in corpus/corpus_metadata.toml
+# 2. Run the pipeline
+uv run python -m underwriting_copilot.cleanup
+uv run python -m underwriting_copilot.chunking
+uv run python -m underwriting_copilot.embed
+uv run python -m underwriting_copilot.index
+# 3. Run the demo
+uv run python -m underwriting_copilot.retrieve
+```
+
+Full corpus rebuild: ~60s wall (model load + 461 × 0.12s embed + 1s upsert).
