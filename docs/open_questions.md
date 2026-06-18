@@ -52,3 +52,16 @@ pipeline.
     is larger and the synonym problem is observable in eval results.
   - Resolves into: a D-entry naming either the controlled vocabulary OR
     the explicit deferral, with reasoning.
+
+
+## Q7 — Revisit BGE-M3's full multi-functionality (FlagEmbedding/PyTorch) if Path B retrieval quality is insufficient?
+
+D009 commits to Path B: MLX dense + BM25 sparse, fused via RRF in Qdrant. The rejected paths — FlagEmbedding's full triple-vector (dense + learned sparse + ColBERT) or an ONNX equivalent — remain valid options if Day 3 eval reveals retrieval ceiling effects that Path B cannot overcome.
+
+Resolution criteria:
+
+- If retrieval is acceptable on the Day 3 benchmark (target: ≥80% citation accuracy on the hand-curated query set), close Q7 with *Path B sufficient*.
+- If quality is bounded by the sparse channel specifically (rather than the dense channel or generation layer), consider sidecar-ing FlagEmbedding for its learned sparse weights while keeping MLX for dense.
+- If quality is bounded by single-vector dense limits, ColBERT-style late interaction becomes interesting; would more likely arrive via a cross-encoder reranker pass than via full BGE-M3 multi-vector.
+
+To be revisited after the Day 3 eval pass.

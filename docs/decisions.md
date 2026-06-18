@@ -366,3 +366,43 @@ outside the current corpus distribution.
 **Trade-offs / risks:** what you're giving up or exposing yourself to.
 **When to revisit:** the condition under which this should be reconsidered.
 -->
+
+
+## D009 — BGE-M3 dense via mlx-embeddings + BM25 sparse via Qdrant native sparse vectors
+
+**Date:** 2026-06-18  
+**Status:** Active
+
+### Decision
+
+Hybrid retrieval over two channels indexed in Qdrant:
+
+1. **Dense channel** — BGE-M3 (`BAAI/bge-m3`) via `mlx-embeddings`. 1024-dim vectors. Apple Silicon native, consistent with the local-first MLX stack established by D004 and the broader project orientation.
+2. **Sparse channel** — BM25 sparse vectors computed via `rank-bm25` over the corpus vocabulary, indexed in Qdrant's native sparse vector field.
+
+Fusion: Reciprocal Rank Fusion (RRF) at query time via Qdrant's hybrid query API.
+
+### Why not BGE-M3's full multi-functionality (dense + learned sparse + ColBERT)?
+
+BGE-M3 produces three vector types from one forward pass, but only via:
+
+- **`FlagEmbedding`** (PyTorch/MPS) — canonical implementation. Breaks the MLX-everywhere stack, heavier dependency surface, slower on Apple Silicon than MLX would be in our environment.
+- **ONNX runtime** — works, but new ecosystem dependency and more debugging surface for the project budget.
+
+The MLX packages (`mlx-embeddings`, `mlx-embedding-models`) load BGE-M3 as a standard XLM-RoBERTa encoder. The sparse linear+ReLU head and ColBERT projection head are model-specific and not implemented in either package. Going via MLX means dense-only.
+
+BM25 substitution sacrifices BGE-M3's learned sparse term weights. At a 6-document, 461-chunk corpus, the gap between learned-sparse and BM25 is small in expectation. RRF fusion with dense gives industry-standard hybrid retrieval performance.
+
+ColBERT-style late interaction is deferred (see Q7). If eval reveals retrieval ceiling effects on Day 3, FlagEmbedding becomes a candidate for revisitation.
+
+### Why Qdrant native sparse, not client-side fusion?
+
+Qdrant supports sparse vectors as a first-class type since v1.7. Keeping both channels in Qdrant means one storage system, one query path, and one set of operational concerns. Client-side fusion would require maintaining a separate sparse store and lose Qdrant's hybrid-query optimisation.
+
+### Operational notes
+
+- Dense vector dim: 1024 (BGE-M3 standard).
+- Sparse representation: `(indices[], values[])` pairs in Qdrant's native sparse vector format.
+- BM25 parameters: defaults (`k1=1.5`, `b=0.75`) until eval suggests tuning.
+- BM25 vocabulary computed at index time over the full corpus; query-time uses the same vocabulary.
+- Last-checked: `mlx-embeddings` v0.1.0 on PyPI (Blaizzy/mlx-embeddings), supports XLM-RoBERTa architecture which BGE-M3 derives from.
