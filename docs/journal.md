@@ -738,3 +738,44 @@ Day 4 concrete moves:
 - Optional Q10 Phase 2 (GEPA on Qwen) if Day 4 has slack.
 - Governance.md, security.md, evaluation.md per the original Day 4 plan.
 - report.py to produce the formal per-cell aggregation from `eval/results/2026-06-18T12-16-35Z/raw.jsonl` (currently the numbers are reproducible from the stderr log but a deterministic aggregator is the right artefact for the Day 5 write-up).
+
+
+---
+
+## Day 4 morning — 2026-06-18 evening into Day 4
+
+Day 4 opened with Q12 investigation. Three probes in sequence, each cheaper than the next would have been, falsified two hypotheses and localized to a third — leading to a clean diagnostic close rather than a fix.
+
+### What I tried, in order
+
+**Probe 1: top_k.** The cheapest possible test — did raising `top_k` from 5 to 8 surface the three failing questions? No. All three still missed.
+
+**Probe 2: per-channel ranks.** Inspected each failing question's `dense_rank` and `sparse_rank` from the `RetrievalHit` objects. q001 and q004 had the gold chunks at moderate ranks on both channels (dense 22-45, sparse 5-7) — the kind of position where RRF k=60's flat reciprocal curve loses to chunks with mediocre-on-both ranks. q013 was the surprise: gold had `dense_rank=None` (outside the top-50 dense candidates) but `sparse_rank=4` (strong BM25 match). Formed two hypotheses: (A) candidate-set width too narrow to capture single-channel hits, (B) RRF k too flat to reward strong single-channel signal.
+
+**Probe 3: RRF tuning grid.** Swept 6 configurations of `(candidates_per_channel, rrf_k)` from `(50, 60)` to `(461, 10)`. Best-case configuration moved q013 from rank #20 to rank #11; q001 and q004 barely moved. **Both hypotheses falsified cleanly.** None of the three landed in top-5 under any configuration.
+
+**Probe 4: dense channel localization.** Direct dense-only query against the full 461-chunk corpus placed q013's gold chunk at **rank 107**. The chunk's embedding is sound (self-retrieval with the chunk's own first sentence places it at rank 1, score 0.811, large gap to rank 2). The issue is purely that the *question phrasing* doesn't embed near the *chunk content*.
+
+Confirmed with alternative phrasings: queries phrased like the chunk's actual claim verbs ("no longer insures", "stand-alone risks") embed near the chunk; queries phrased like meta-policy questions ("what is X's policy on Y") embed near other chunks that themselves discuss policies meta-statically.
+
+### The root cause
+
+This is a well-understood limitation of single-vector dense retrieval with CLS-pooled embeddings (the configuration per D010). The dense channel encodes "what is this passage about" at a topical level. The gold chunks are about specific operational decisions; the benchmark queries are about policy classes. Different semantic clusters in the embedding space. RRF fusion cannot rescue chunks the dense channel ranks at #107 because the candidate set realistically caps below 500.
+
+### Why I closed Q12 rather than fixing it
+
+Three remediation paths exist (LLM query expansion / HyDE; cross-encoder reranker; BGE-M3 multi-vector via Q7 revisit). Each is real engineering work — 2-8+ hours minimum. Day 4 has Q11 (production model choice), `eval/report.py`, and the governance/security/evaluation docs still to land. A half-finished retrieval improvement is worse for the 5-day artefact than a complete diagnostic close.
+
+Lodged Q13 (post-interview / v2) to track the remediation question. Q7 (FlagEmbedding multi-functionality) gets stronger by Q13 — the multi-vector option is one of three candidate fixes, and Q12's data is exactly the kind of empirical evidence Q7 was waiting for.
+
+### Meta-lesson worth recording
+
+I formed two cheap hypotheses (candidate-set width too narrow; RRF k too charitable to mediocre-on-both chunks) and the data falsified both within minutes of probe time. The right discipline was "form hypothesis, design test that can falsify it, accept the falsification." The wrong discipline would have been to implement either fix optimistically and ship — both fixes were attractive enough that I would have been tempted to ship them without the probes if I hadn't designed the harness to make the probes cheap.
+
+This is the same shape of lesson as Day 3's family-axis retraction: a hypothesis can look obviously right and be obviously wrong on the data. The eval harness's value here was not the headline citation_recall numbers but the per-channel rank data that made these hypotheses cheap to falsify.
+
+### Where Day 4 stands now
+
+Q12 closed-diagnosed; Q13 lodged. The retrieval miss pattern remains a real limitation, documented honestly. Next concrete moves: Q11 decision (production model choice), then `eval/report.py` for the formal aggregation, then governance/security/evaluation docs per the original Day 4 plan. Optional Q10 Phase 2 (GEPA) only if Day 4 has slack after that.
+
+The 11.5% retrieval miss affects both models equally so it doesn't change Q11's resolution. The artefact ships with v1 retrieval as-is; the Day 5 narrative is stronger by acknowledging the limitation precisely than by hiding it.

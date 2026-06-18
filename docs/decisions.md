@@ -889,3 +889,100 @@ The Day 3 sweep showed 3 of 26 answerable questions (11.5%) had `retrieval_recal
 **Falsification criterion (proposed):** if increasing top_k from 5 to 8 surfaces all three gold chunks, Q12's resolution is "raise top_k=8 as the production default; no deeper retrieval changes needed." If raising top_k doesn't fix it, deeper investigation (paths 2-4) becomes necessary.
 
 **Cross-link to Q11:** Q12's resolution may not change the production model choice — both models are equally affected by retrieval misses — but it does change the headline citation_recall numbers reported in the Day 5 artefact. If retrieval improvements lift baseline recall by ~10pp, that's a more compelling overall result than the current numbers.
+
+
+---
+
+## Q12 — CLOSED 2026-06-18 (DIAGNOSED, REMEDIATION DEFERRED)
+
+**Original question:** retrieval miss pattern at 11.5% of answerable questions (3/26 in the D014 sweep). Investigation needed for Day 4.
+
+**Resolution: root cause diagnosed; remediation deferred to v2 / Q13.**
+
+### Investigation summary
+
+Three probes run in sequence, each cheaper than the next would have been:
+
+**Probe 1 — top_k experiment.** Re-ran the three failing questions (q001, q004, q013) at `top_k=8`. All three still missed. Confirmed: not a top_k truncation issue.
+
+**Probe 2 — RRF tuning grid.** Swept 6 configurations of `(candidates_per_channel, rrf_k)` across `(50, 60)`, `(200, 60)`, `(50, 20)`, `(200, 20)`, `(461, 20)`, `(461, 10)`. Best-case configuration moved q013 from rank #20 to rank #11; q001 and q004 barely moved. None of the three landed in top-5 under any configuration. Falsified both candidate-set-width and RRF-flatness hypotheses cleanly.
+
+**Probe 3 — dense channel localization on q013.** Direct dense-only query against the 461-chunk corpus placed `munich_re_sustainability_2023__0053__thermal-coal` at **rank 107** for the benchmark query "What is Munich Re's underwriting policy on new thermal coal mines and power plants?" The gold chunk was beaten by 106 chunks the dense embedding considered more semantically similar to the query, including Swiss Re's parallel thermal-coal chunk at rank 1.
+
+### Root cause
+
+**Self-retrieval test confirmed the embedding is sound.** Querying with the chunk's own first 200 characters retrieved it at rank 1 with score 0.8110 — a substantial gap to rank 2 (0.6964). The chunk's vector is valid; the corpus index is valid.
+
+**Alternative query phrasings localized the asymmetry.** Of four alternative phrasings of the q013 query:
+
+| Phrasing | Gold rank |
+|---|---|
+| "thermal coal mines coal-fired power plants insurance" | #1 |
+| "Munich Re no longer insures thermal coal mines" | #3 |
+| "Munich Re thermal coal" | not in top-5 |
+| "stand-alone risks thermal coal Munich Re" | not in top-5 |
+
+The pattern: queries phrased like the **chunk's actual claim verbs** ("no longer insures", "stand-alone risks") embed close to the chunk. Queries phrased like **meta-policy questions** ("what is X's policy on Y") embed close to OTHER chunks that themselves discuss policies meta-statically — investment policy chunks, decarbonisation approach chunks, etc.
+
+**This is a well-understood limitation of single-vector dense retrieval.** CLS-pooled BGE-M3 (per D010) encodes "what is this passage about" at a topical level. The gold chunk is about a specific 2018 operational decision; the benchmark query is about a policy class. Different semantic clusters in the embedding space. RRF fusion cannot rescue chunks the dense channel ranks at #107 because the candidate set realistically caps below 500.
+
+### Why no v1 remediation
+
+Three remediation options exist; each is real engineering work outside the 5-day budget:
+
+1. **LLM query expansion / HyDE** — use the LLM to expand or rephrase the query before retrieval. ~1-2 hours plus added per-query LLM latency.
+2. **Cross-encoder reranker** — fetch a wide candidate set, then rerank the top-50 with a cross-encoder model. ~3-4 hours plus added reranking latency.
+3. **BGE-M3 multi-vector channel** — Q7 revisit. Move from mlx-embeddings (single-vector) to FlagEmbedding for full multi-functionality including ColBERT-style multi-vector. ~4-8 hours; breaks the "MLX everywhere" decision (D009).
+
+Q11 still resolves cleanly without these — the 11.5% retrieval miss affects both models equally and doesn't change the production choice. The Day 5 artefact ships with the diagnostic finding documented and the remediation paths scoped, which is a stronger narrative than a half-implemented optimization.
+
+### Meta-finding worth recording
+
+I formed two cheap hypotheses (candidate-set width too narrow; RRF k too charitable to mediocre-on-both chunks) and the data falsified both cleanly. The right discipline was "form hypothesis, design test that can falsify it, accept the falsification." The wrong discipline would have been "form hypothesis, implement the fix without testing it, ship and hope." Probes 1 and 2 each took under a minute to design and run; either could have surfaced before any code change.
+
+---
+
+## Q13 — OPEN: remediation for query/chunk asymmetry in retrieval
+
+**Date:** 2026-06-18
+**Status:** OPEN
+**Phase:** post-interview / v2
+
+Per Q12's closure, the 11.5% retrieval miss rate observed in the D014 sweep is caused by query/chunk asymmetry on single-vector dense embeddings, not by fusion tuning or candidate-set width. Three remediation paths to evaluate for v2:
+
+### Option A — LLM query expansion or HyDE
+
+Pre-process every query through an LLM that either:
+- **Expands** the query with semantically equivalent phrasings (e.g., "Munich Re thermal coal policy" → "Munich Re no longer insures thermal coal; underwriting restrictions on coal-fired power plants; single-location stand-alone risks").
+- **Hypothesises** what an answer chunk would look like and embeds *that* (HyDE — Hypothetical Document Embeddings).
+
+**Cost:** ~1-2 hours of integration. One additional LLM call per query (~3-10s on Qwen).
+**Risk:** LLM rewrites can be wrong; expanding "Bermuda hurricane bonds" with hypothetical content could surface false-positive chunks and harm refusal precision.
+**Strength:** keeps the existing index and infrastructure; pure pre-processing layer.
+
+### Option B — Cross-encoder reranker
+
+Fetch a wide candidate set (top-50 from RRF, say), then rerank with a cross-encoder model (e.g., `mxbai-rerank-large-v1` or BGE's own reranker) that scores each (query, chunk) pair jointly rather than independently.
+
+**Cost:** ~3-4 hours including model selection, integration, and re-running eval.
+**Risk:** added latency per query (~1-3s for a top-50 rerank). May not help if the gold chunk isn't in the candidate set to begin with (q013's case at width=461 suggests this risk is real).
+**Strength:** addresses the asymmetry directly — cross-encoders are designed to handle query/passage style differences.
+
+### Option C — BGE-M3 multi-vector channel (Q7 revisit)
+
+Move from mlx-embeddings (single-vector dense via CLS pooling) to FlagEmbedding (full multi-functionality). Add a third channel to RRF: ColBERT-style multi-vector token-level matching, which would handle "thermal coal" verbatim regardless of overall query/chunk style mismatch.
+
+**Cost:** ~4-8 hours. Breaks D009 ("MLX-everywhere"). Re-index 461 chunks.
+**Risk:** significant refactor; the MLX-everywhere decision had real benefits (Apple Silicon utilization, single inference stack).
+**Strength:** strongest architectural fix; the multi-vector channel is built for exactly this failure mode.
+
+### Resolution path
+
+Not for the 5-day artefact. Empirical comparison across A/B/C is a v2 work-stream. Decision when v2 is scoped will depend on:
+- Whether per-query latency budget can absorb option A's LLM call or option B's reranker pass.
+- Whether the D009 commitment to MLX-everywhere is load-bearing for the v2 use case.
+- Whether the 11.5% miss rate is actually production-blocking, or whether users can rephrase their queries when retrieval surfaces obviously-wrong chunks (operator workaround).
+
+### Cross-link to Q7
+
+Q7 (FlagEmbedding for BGE-M3 multi-functionality) was lodged on Day 2 as a possible Day 3 follow-up if retrieval hit a ceiling. Q12's investigation has now produced the empirical evidence Q7 was waiting for: there is a real retrieval ceiling, and the multi-vector channel is one of the three plausible remediations. **Q7's case is now stronger by Q13.** If v2 scoping picks Option C, Q7 closes via implementation.
