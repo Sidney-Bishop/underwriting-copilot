@@ -930,3 +930,299 @@ consolidation. The consolidation entry will need to incorporate the
 Day-5-morning updates honestly — not as a retraction of the Day 3
 findings but as a refinement that the eval harness's bigger N
 naturally produced.
+
+
+---
+
+## Day 5 close — 2026-06-18 evening: five-day consolidation
+
+This entry consolidates the five-day arc into a single narrative. It is
+written as the final journal entry of the v1 build; the per-day entries
+above remain the unredacted source. Where this summary and a per-day
+entry conflict, the per-day entry wins on facts and this entry wins on
+framing only.
+
+### What was built
+
+A local-first RAG copilot for reinsurance underwriting research,
+running entirely on Apple Silicon via oMLX. The pipeline ingests six
+public regulatory and corporate-sustainability PDFs (PRA SS1/21,
+SS3/19, SS5/25; EIOPA System of Governance; Munich Re Sustainability
+2023; Swiss Re Sustainability 2024) through Docling-based chunking
+into 461 chunks with issuer / jurisdiction / supersession metadata,
+indexes them via BGE-M3 dense and Porter-stemmed BM25 sparse vectors
+in Qdrant, retrieves through Reciprocal Rank Fusion with
+configurable filters, and generates cited answers through Gemma 4
+31B IT (production default per D015) or Qwen3.6 35B A3B (env-var
+override) via oMLX's OpenAI-compatible endpoint. Citations are
+validated structurally; hallucinated citations are partitioned and
+counted; refusals are detected by exact-phrase contract. Every
+component is covered by tests; the harness ran 280 cells across
+two canonical sweeps in 5 days with zero errored cells.
+
+### What the eval looks like
+
+Seventy hand-crafted benchmark questions: 44 answerable (single-
+chunk, multi-chunk-within-document, cross-document) and 26 refusal
+(out-of-corpus, adjacent-but-unanswered, false-premise). Six
+metrics per question (citation_recall, citation_precision,
+citation_f1, retrieval_recall, refusal_correct,
+hallucinated_citations_count) plus latency. A 2×2 sweep across
+models × prompts produces 280 cells deterministically. The
+machine-generated `report.md` aggregator is itself 32-tests pinned
+and its numbers reproduce eyeballed journal values exactly.
+
+### Days 1–2: pipeline build
+
+The first two days were straightforward engineering: ingestion,
+chunking, embedding, indexing, retrieval, answer generation,
+citation validation, refusal detection, the test infrastructure
+underneath all of it. Decisions D001 through D012 were lodged in
+this window — Docling for chunking, BGE-M3 for dense, Qdrant local
+mode, RRF over weighted-sum fusion, citation contract as `[chunk_id]`,
+refusal contract as exact-phrase, MLX-everywhere local serving (D009).
+By end of Day 2 the pipeline was operational on real documents and
+the test suite was at ~70 tests.
+
+The Day 2 preliminary eval (N=3, ad-hoc) produced what looked at the
+time like a clean finding: Qwen3.6 35B produced malformed
+`[chunk_id_N]` placeholder citations where Gemma 4 31B produced clean
+verbatim chunk_ids. The provisional framing was "family-axis decisive
+on rigid-format tasks" — i.e., a property of the model family. That
+framing did not survive Day 3.
+
+### Day 3: the family-axis retraction
+
+D014 was designed to falsify the Day 2 framing. A 2×2 sweep (both
+models × two prompt versions) on a 26-question answerable benchmark
+plus 14-question refusal benchmark, with a **pre-stated** falsification
+criterion: if prompt v2 moved Qwen's mean citation_recall toward
+Gemma's by 10 percentage points or more, the family-axis interpretation
+would be retracted.
+
+The observed movement was +26.9 percentage points on Qwen, with Gemma
+unchanged. The interpretation was retracted. Day 2's finding had been
+a confounded measurement: model property conflated with prompt-fit
+artifact, observable only because the Day 2 eval was N=3 with no
+prompt control. D014 isolated the axes and the prompt axis explained
+the bulk of the effect.
+
+This was the first of two epistemic updates this artefact records.
+The discipline that produced it — design the test to falsify, state
+the criterion in advance, retract publicly when the data warrants —
+is the same discipline that produced the second one on Day 5.
+
+### Day 4: Q12 close, D015 lodged, prompt v2 promoted, governance docs
+
+Q12 was the 11.5% retrieval miss rate on the Day 3 N=26 sweep — three
+answerable questions where the retriever returned no gold chunk in
+the top-5 across all four cells. Three probes ran in sequence: a
+top_k=8 experiment (didn't help — gold chunks weren't ranks 6–8
+either); a 6-cell RRF tuning grid sweeping `(top_k_per_channel,
+rrf_k)` (best configuration moved one of the three questions from
+rank 20 to rank 11 but none reached top-5); a dense-only localization
+on the worst question (gold at rank 107 of 461 — dense channel was
+the bottleneck). Self-retrieval with the chunk's own text placed it
+at rank 1 with score 0.811, confirming the embedding was sound. The
+issue was query/chunk language asymmetry: the question used meta-
+policy framing ("Munich Re thermal coal") where the chunk used claim-
+verb framing ("Munich Re no longer insures thermal coal mines"). A
+single-vector CLS-pooled dense embedding cannot bridge that gap.
+
+Q12 was closed as **CLOSED-DIAGNOSED, not CLOSED-RESOLVED**. Three
+remediation paths exist (LLM query expansion / HyDE; cross-encoder
+reranker; full BGE-M3 multi-vector via Q7) and Q13 was lodged to
+track them. None of the three are 5-day work; all three are v2.
+
+D015 (the production model choice) was lodged on the back of the
+D014 sweep data: Gemma 4 31B IT as production default. The Day 3
+evidence was within-document parity, weakly-held cross-doc edge,
+and a 0-vs-3 hallucination floor difference; the latency cost was
+the 6.1× Qwen advantage. The decision balanced quality margin against
+latency margin for an analyst-research workflow. Qwen remained
+available via `UNDERWRITING_COPILOT_MODEL` for latency-budgeted
+contexts.
+
+Prompt v2 was promoted from eval-side to production: `answer.py`'s
+`SYSTEM_PROMPT` was replaced with v2 text; `eval/prompts.py`'s v1
+was inlined as a string literal so the D014 replay still measures
+what it measured originally.
+
+The eval/report.py aggregator shipped with 32 unit tests and was
+validated against the journal's eyeball numbers cell-by-cell. From
+that point onward, `report.md` regenerable from `raw.jsonl` is
+the canonical eval surface; the journal cites it but does not
+duplicate it.
+
+Three state docs shipped: `docs/governance.md` (scope, contracts,
+decisions, output discipline), `docs/security.md` (threat model and
+v1 mitigations), `docs/evaluation.md` (methodology paired with the
+machine-generated report). The intent was that a reviewer landing
+fresh on the project could read those three plus `status.md` and
+have the v1 picture in 30 minutes without reading code.
+
+### Day 5 morning: the within-document parity update
+
+The benchmark extended from 40 questions to 70, adding +8 cross-
+document, +6 multi-chunk, +6 adjacent-refusal, +4 single-chunk, +4
+out-of-corpus, +2 false-premise. The 32 new gold_chunk_id references
+pre-flight-validated against the live corpus before any cells ran.
+The full 280-cell sweep completed in 45.7 minutes with zero errored
+cells.
+
+The results updated several Day 3 framings:
+
+- **Refusal correctness strengthened**: 104/104 across all 4 cells at
+  N=26 refusal questions. The hardest category (adjacent-refusal,
+  where the corpus discusses the topic qualitatively but lacks the
+  specific number asked for) refused cleanly in all 40 cells.
+
+- **Within-document parity weakened**: Day 3 had Gemma and Qwen
+  tied at 0.929 on n=21 within-document retrievable. The extended
+  N=27 retrievable subset showed Gemma 0.889 vs Qwen 0.833 — a
+  5.6pp gap. Same pattern on single-chunk (was 1.000/1.000 at n=15,
+  now 1.000/0.941 at n=17) and multi-chunk (was 0.750/0.750 at n=6,
+  now 0.583/0.542 at n=12). The Day 3 "equivalent on most workloads"
+  framing was a small-sample artifact; Gemma is in fact ~5pp ahead
+  across every answerable subset at the bigger N.
+
+- **Cross-document gap narrowed**: was Gemma 0.417 vs Qwen 0.000 at
+  N=2 (41.7pp, weakly held); now Gemma 0.233 vs Qwen 0.150 at N=10
+  (8.3pp). The Gemma edge is real but ~5× smaller than N=2 implied.
+
+- **Retrieval miss rate worsened**: 11.5% → 25.0%. The new cross-
+  document and multi-chunk questions surface the same query/chunk
+  asymmetry Q12 diagnosed. The `excluding_retrieval_misses` subset
+  shows 20pp of locked quality (Gemma 0.798 vs full-set 0.598). Q13
+  is now the highest-value v2 work-stream.
+
+- **Hallucination floor difference unchanged**: Gemma 0 across the
+  full 88-cell answerable sweep; Qwen v2 7 (was 3 at N=26).
+
+This was the second of two epistemic updates. The Day 3 framing was
+appropriately cautious on cross-document (explicitly flagged the N=2
+weakness) but too confident on within-document. The honest rule
+learned: **the bar for "claim parity" should be sample size that
+could detect a 5pp gap with reasonable power**, and N=21 with most
+questions easy enough that both models reached 1.000 was not that.
+
+D015's substantive conclusion stands and is strengthened. Gemma is
+the production default; the rationale is now "consistent ~5pp quality
+edge across every answerable subset, 0-vs-7 hallucination floor,
+8.3pp cross-doc edge at N=10" rather than the Day 3 "within-document
+parity plus weakly-held cross-doc edge." Qwen remains the latency-
+budget option (6.1× faster, still 100% refusal correctness, still
+0.545 on the full set, just 5pp behind Gemma everywhere).
+
+### Day 5 remainder: synthetic documents, README, this entry
+
+Three synthetic Lloyd's-syndicate documents drafted per D003: a
+Risk Appetite Statement, a Delegated Underwriting Authority
+Schedule, and a Thermal Coal Underwriting Policy, all describing
+the fictional Sycamore Re Syndicate 4271 operated by Sycamore
+Underwriting Limited. The documents cross-reference each other
+and the public corpus (PRA SS1/21, PRA SS5/25) to model how
+internal documents would sit within the wider regulatory
+landscape. They are explicitly **not** indexed in v1; they sit in
+`corpus/synthetic/` as demonstration content. A v2 work-stream
+would ingest them, re-index, add benchmark questions covering
+cross-references between internal and external documents, and
+introduce per-document access control extending the existing
+filter parameters.
+
+The top-level README was refreshed to orient a fresh reviewer: what
+v1 does, what it does not do, prerequisites, quickstart with a real
+smoke-test command, the 60-second architecture, the eval surface,
+and the documentation map of all 11 docs/ files plus the corpus/
+synthetic README. The two epistemic updates are called out by commit
+hash in the README so a reviewer can navigate directly to them.
+
+### What this artefact demonstrates
+
+The v1 system is a working local-first RAG copilot on real
+regulatory documents with cited answers and structural correctness
+signals. The harness measures it deterministically and reproducibly.
+The decision discipline — state docs, decision history, append-only
+journal, audit-trail commits — is documented across the artefact and
+visible in the 47-commit log.
+
+Two framings the artefact retracted on the data:
+
+1. Day 3 family-axis retraction (commit `7e60ef4`) — a confounded
+   measurement caught by D014's designed-to-falsify 2×2 sweep.
+2. Day 5 within-document parity update (commit `5d0a23a`) — a
+   small-sample artifact caught by the extended N=44 benchmark.
+
+Both retractions were driven by the eval harness's own structure:
+in the first case, by isolating the prompt axis from the model axis
+in a 2×2 design; in the second case, by simply running more
+questions. The harness was built to catch this kind of error and it
+did.
+
+### What this artefact does not demonstrate
+
+Honesty about scope:
+
+- No production-grade authentication, audit logging, or access
+  control. v1 is local-only single-operator.
+- No LLM-as-judge for semantic correctness. The eval measures
+  whether the model cited the chunks we expected (structural
+  correctness), not whether its prose accurately reflects them.
+- No generalization claim. The corpus is 6 PDFs; the eval is 70
+  hand-crafted questions. The numbers are honest about that
+  corpus and benchmark only.
+- No latency / throughput characterisation under sustained load.
+  Both models were warm-loaded for the sweeps; cold-start and
+  long-tail behavior are uncharacterised.
+- No retrieval remediation. The 25% miss rate is diagnosed (Q12)
+  but unresolved; Q13 carries the v2 remediation paths.
+
+Each of these is named in `governance.md`, `security.md`, or
+`evaluation.md` — none are buried.
+
+### Meta-lessons recorded across the arc
+
+1. **Design the test to falsify, not confirm**, and state the
+   falsification criterion in advance. D014 worked because the
+   criterion was set before the data was collected.
+
+2. **Retract publicly when data warrants.** Two retractions in five
+   days. Both are committed to git, both have explicit superseding
+   entries in `decisions.md`, both are called out in the README.
+
+3. **Orthogonal axes catch failures single-axis metrics hide.** The
+   Q12 retrieval-miss finding only exists because `retrieval_recall`
+   is a metric separate from `citation_recall`. The
+   `excluding_retrieval_misses` subset only exists because the
+   harness was designed to surface that distinction.
+
+4. **Form hypothesis, design falsifying test, accept falsification
+   quickly.** The Q12 RRF tuning grid falsified both candidate
+   hypotheses (candidate-set width; RRF flatness) within minutes;
+   that saved hours of unproductive tuning and pointed to the real
+   bottleneck (the dense channel's language-asymmetry limitation).
+
+5. **Parity claims need power, not point estimates.** The Day 3
+   within-document "parity" was a measurement, not a population-
+   level fact. The bar should have been "what sample size could
+   detect a 5pp gap?", not "what does this 21-question sample show?"
+
+6. **Two distinct epistemic failure modes** the eval harness caught:
+   Day 2's confounded variable (model property vs prompt-fit) and
+   Day 5's small-sample artifact (parity as population-level fact).
+   Both were structural errors in interpretation, not careless
+   measurement. The harness's job was to make them visible; that's
+   what it did.
+
+### Closing
+
+The artefact is what it is: a five-day RAG copilot on real
+regulatory documents, evaluated honestly, with the parts that don't
+work named alongside the parts that do. Forty-seven commits, two
+retractions, one production model decision, eleven documentation
+files, four synthetic demo documents, 158+ tests, and an eval
+harness whose numbers reproduce deterministically from `raw.jsonl`.
+A v2 work-stream is named with prioritised remediation paths and
+realistic scope.
+
+This entry is the last journal append of the v1 build.
