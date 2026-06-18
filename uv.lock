@@ -2569,6 +2569,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "docling" },
+    { name = "httpx" },
     { name = "mlx-embeddings" },
     { name = "pydantic" },
     { name = "qdrant-client" },
@@ -2583,6 +2584,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "docling", specifier = ">=2.103.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "mlx-embeddings", specifier = ">=0.1.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "qdrant-client", specifier = ">=1.18.0" },
