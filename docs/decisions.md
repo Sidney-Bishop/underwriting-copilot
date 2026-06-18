@@ -605,7 +605,7 @@ Day 4+ if the corpus grows (synthetic documents per D003) and rebuild becomes sl
 ## Q8 — Does the exclude_superseded default leave coverage gaps when the successor isn't in the corpus? Is SS1/22's relationship to SS1/21 actually supersession?
 
 **Date:** 2026-06-18  
-**Status:** Open
+**Status:** Closed 2026-06-18 — SS1/21 metadata corrected (SS1/22 is unrelated 'Trading activity wind-down'); SS3/19 → SS5/25 verified correct (replaces in entirety, 3 Dec 2025).
 
 ### Background
 
