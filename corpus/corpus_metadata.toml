@@ -47,7 +47,6 @@ issuer_type = "regulator"
 jurisdiction = "UK"
 effective_date = 2021-03-01
 version = "SS1/21"
-superseded_by = "SS1/22"
 topics = ["operational_resilience", "business_continuity", "scenario_testing", "governance"]
 provenance = "real"
 source_url = "https://www.bankofengland.co.uk/-/media/boe/files/prudential-regulation/supervisory-statement/2021/ss121-march-21.pdf"
