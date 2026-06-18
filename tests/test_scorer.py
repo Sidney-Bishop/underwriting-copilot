@@ -278,11 +278,11 @@ category = "x"
         """
         benchmark_path = Path(__file__).parent.parent / "eval" / "benchmark.toml"
         questions = load_benchmark(benchmark_path)
-        assert len(questions) == 40
+        assert len(questions) == 70
         answerable = [q for q in questions if not q.expected_refusal]
         refusals = [q for q in questions if q.expected_refusal]
-        assert len(answerable) == 26
-        assert len(refusals) == 14
+        assert len(answerable) == 44
+        assert len(refusals) == 26
         # All refusals have empty gold; all answerables have non-empty gold.
         assert all(q.gold_chunk_ids == [] for q in refusals)
         assert all(q.gold_chunk_ids for q in answerable)

@@ -779,3 +779,154 @@ This is the same shape of lesson as Day 3's family-axis retraction: a hypothesis
 Q12 closed-diagnosed; Q13 lodged. The retrieval miss pattern remains a real limitation, documented honestly. Next concrete moves: Q11 decision (production model choice), then `eval/report.py` for the formal aggregation, then governance/security/evaluation docs per the original Day 4 plan. Optional Q10 Phase 2 (GEPA) only if Day 4 has slack after that.
 
 The 11.5% retrieval miss affects both models equally so it doesn't change Q11's resolution. The artefact ships with v1 retrieval as-is; the Day 5 narrative is stronger by acknowledging the limitation precisely than by hiding it.
+
+
+---
+
+## Day 5 morning — 2026-06-18 evening into Day 5
+
+Extended the benchmark from 40 → 70 questions (+8 cross-document, +6
+multi-chunk within-document, +6 adjacent-refusal, +4 single-chunk, +4
+out-of-corpus refusal, +2 false-premise refusal). Pre-flight validated
+all 32 new gold_chunk_id references against the corpus; full sweep ran
+280 cells in 45.7 minutes with 0 errors. The bigger N updates several
+Day 3 findings, in some cases substantively.
+
+### What survived and what didn't
+
+**Refusal correctness strengthened.** Day 3's 56/56 (N=14) becomes
+**104/104 across all 4 cells at N=26**. Both models, both prompts, all
+three refusal categories: 100% correct. The +6 new adjacent-refusal
+questions (the hardest category, where the corpus discusses the topic
+qualitatively but lacks the specific number or detail asked for) all
+refused cleanly. This is the unambiguously strengthened finding of the
+extension.
+
+**Within-document parity claim weakened.** Day 3 said Gemma v2 and
+Qwen v2 were tied at 0.929 on n=21 within-document retrievable. The
+extended N=27 retrievable subset shows **Gemma 0.889 vs Qwen 0.833 —
+a 5.6pp gap**. Same pattern on multi-chunk (Gemma 0.583 vs Qwen 0.542
+at N=12, was 0.750/0.750 at N=6) and even on single-chunk retrievable
+where Gemma stays at 1.000 but Qwen drops to 0.941. The pattern across
+subsets is consistent: **Gemma is ~5-6pp ahead of Qwen on every
+answerable subset at the bigger N**, where Day 3 said parity.
+
+**Cross-document gap narrowed but did not vanish.** Day 3 had Gemma
+0.417 vs Qwen 0.000 at N=2 — a 41.7pp gap I correctly flagged as
+underpowered. N=10 shows **Gemma 0.233 vs Qwen 0.150 — an 8.3pp gap**.
+The gap is real but ~5× smaller than N=2 implied. Both models struggle
+on cross-document synthesis; Gemma struggles less.
+
+**Hallucination floor difference persists.** Gemma produced 0
+hallucinations across the full 88-answerable-cell sweep (44 questions
+× 2 prompts). Qwen v2 produced 7 (was 3 at N=26): the new question
+q058 alone produced 3 hallucinated citations from Qwen v2.
+Qualitative difference between "zero" and "small-but-nonzero" remains.
+
+**Retrieval miss rate worse than thought.** Day 3 reported 3/26 =
+11.5%. Extended sweep shows **11/44 = 25.0%**. The 8 additional misses
+are spread across the new cross-doc questions (q042, q044-q048) and
+multi-chunk questions (q051, q053). The new cross-doc questions in
+particular are vulnerable to the same query/chunk language asymmetry
+Q12 diagnosed: queries phrased as cross-issuer comparisons ("How do
+Munich Re and Swiss Re differ in their...") don't embed near the
+chunks that hold the answer-content. Q13's urgency increases
+materially — see decisions.md amendment.
+
+**Within-document quality lift if retrieval worked.** The
+`excluding_retrieval_misses` subset shows what the headline numbers
+would be without the retrieval bottleneck: Gemma jumps from 0.598 →
+0.798, Qwen v2 from 0.545 → 0.727. **20pp of locked quality sitting
+behind a known issue**, which is the strongest empirical case yet for
+Q13's three remediation paths.
+
+### Headline numbers, extended sweep
+
+| Cell | citation_recall | citation_precision | refusal | hallucinations | latency_ans |
+|---|---|---|---|---|---|
+| Gemma × v1 | 0.598 | 0.524 | 26/26 | 0 | 21.7s |
+| Gemma × v2 | 0.598 | 0.520 | 26/26 | 0 | 22.9s |
+| Qwen × v1 | 0.386 | 0.296 | 26/26 | 23 | 3.3s |
+| Qwen × v2 | 0.545 | 0.483 | 26/26 | 7 | 3.4s |
+
+Gemma is now consistently the higher-quality model across every
+answerable subset. Qwen retains its ~6× latency advantage.
+
+### Implications for D015
+
+D015 (production model default Gemma 4 31B IT) was lodged on the
+basis of Day 3 data showing within-document parity plus a weakly-held
+cross-doc edge plus the hallucination floor. The extended data
+**strengthens the rationale rather than weakens it**:
+
+- Gemma is ahead on every subset, not just cross-doc.
+- The Gemma edge on cross-doc is smaller than Day 3 N=2 implied but
+  remains real at N=10.
+- The hallucination floor difference is unchanged.
+- The latency trade-off (the only Qwen advantage) is unchanged.
+
+For an analyst-research-workflow deployment that values quality
+margins over latency margins, Gemma is more clearly the right default
+than the Day 3 data alone supported.
+
+### Meta-lesson on small-sample claims
+
+Day 3's framing was "Gemma and Qwen are equivalent on within-document
+workloads (N=21); the cross-doc gap is suggestive but N=2 weak." That
+framing carried the right caveat on cross-doc but too-confident parity
+on within-doc. The bigger N shows the parity itself was a small-sample
+artifact — a 5-6pp gap was there all along, just averaging away at
+N=21 of which 15 were single-chunk-perfect for both models.
+
+The honest update is **the bar for "claim parity" should be higher
+than "no observable gap on N=21"**. At minimum, parity claims need a
+sample size that could detect a 5pp gap with reasonable power — and
+this benchmark, even at N=44, is borderline for that. The original
+Day 3 claim "both models 0.929 on n=21" was an accurate measurement
+of the sample but a less accurate description of the underlying
+population. I should have framed it as "both models reach high recall
+on within-document workloads; the gap is below this benchmark's
+resolution" rather than as parity.
+
+This is a different shape of error from the Day 2 family-axis
+retraction. Day 2 had a confounded variable I missed; Day 3 had a
+small-sample artifact I called as a population-level fact. Both are
+worth noting in the final journal entry — the project has had two
+distinct epistemic failure modes that the eval harness's structure
+caught at different points.
+
+### Refusal correctness deserves a moment
+
+104/104 across 4 cells × 26 refusal questions × 3 categories. The
+adjacent category (corpus discusses topic qualitatively, question
+demands specific number or named detail) is the hardest test of
+whether models will confabulate; both models, both prompts refused
+every one of the 40 adjacent cells. False-premise refusals (question
+contains a factual claim that contradicts the corpus): 24/24. Out-of-
+corpus refusals: 40/40.
+
+For a regulatory copilot whose production-relevant failure mode is
+"hallucinate when asked about something outside the corpus", this is
+the load-bearing safety property and it is robust on data that was
+designed to break it.
+
+### State going into Day 5 remainder
+
+The extended sweep results are at
+`eval/results/2026-06-18T15-32-07Z/report.md`. They supersede the
+Day 3 sweep as the canonical eval data — but the Day 3 sweep remains
+the authoritative basis for the family-axis retraction (which was an
+N=26 finding and doesn't change at N=44). Two canonical artefacts now
+live in `eval/results/`:
+- `2026-06-18T12-16-35Z/` — the N=40 D014 sweep (family-axis
+  retraction, prompt v2 promotion rationale).
+- `2026-06-18T15-32-07Z/` — the N=70 extension (within-document
+  parity weakening, cross-doc gap narrowing, retrieval-miss
+  worsening).
+
+Day 5 priorities are unchanged in shape, mostly affected in narrative:
+synthetic documents per D003, README polish, final 5-day journal
+consolidation. The consolidation entry will need to incorporate the
+Day-5-morning updates honestly — not as a retraction of the Day 3
+findings but as a refinement that the eval harness's bigger N
+naturally produced.

@@ -393,3 +393,321 @@ expected_refusal = true
 gold_chunk_ids = []
 category = "refusal_false_premise"
 notes = "The EIOPA System of Governance guidelines in the corpus predate AI-specific governance. The 2024 AI guideline in the question is fabricated."
+# --- BENCHMARK EXTENSION — Day 5, q041–q070 ---
+#
+# Added 2026-06-18 (Day 5) to strengthen the cross-document N=2
+# limitation flagged in docs/evaluation.md and to give the adjacent-
+# refusal category more sample size. Brings the benchmark from 40 → 70
+# questions: 44 answerable + 26 refusal.
+#
+# Composition of the +30:
+#   +8  cross_document (was 2, now 10)
+#   +6  multi_chunk_*  (was 6, now 12)
+#   +6  refusal_adjacent (was 4, now 10)
+#   +4  single_chunk_* (was 18, now 22)
+#   +4  refusal_out_of_corpus (was 6, now 10)
+#   +2  refusal_false_premise (was 4, now 6)
+#
+# Gold_chunk_ids on cross-doc and multi-chunk questions use chunk IDs
+# observed in actual retrieval outputs during Days 3–4. The runner's
+# validate_benchmark_against_corpus pre-flight will fail-fast if any
+# is stale.
+
+
+# ==== Cross-document synthesis (q041-q048) ====
+
+[[question]]
+id = "q041"
+query = "How do Munich Re and Swiss Re differ in their disclosed approach to fossil fuel exclusion criteria?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0100__defined-exclusion-criteria",
+    "swiss_re_sustainability_2024__0260__swiss-re-s-fossil-fuel-related-threshold",
+]
+category = "cross_document"
+notes = "Cross-issuer exclusion-criteria comparison. The model may legitimately cite additional supporting chunks beyond the two anchors."
+
+[[question]]
+id = "q042"
+query = "What are Munich Re's and Swiss Re's stated approaches to decarbonization in their sustainability disclosures?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0075__decarbonisation-approach-to-investments",
+    "swiss_re_sustainability_2024__0157__advancing-the-net-zero-transition",
+]
+category = "cross_document"
+notes = "Cross-issuer decarbonization comparison; both companies discuss it but with different framings (investments approach vs net-zero transition)."
+
+[[question]]
+id = "q043"
+query = "How do Munich Re and Swiss Re each describe their monitoring of climate-related risks?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0127__physical-risks-acute-and-chronic",
+    "swiss_re_sustainability_2024__0258__monitoring-climate-risks",
+]
+category = "cross_document"
+notes = "Cross-issuer climate monitoring comparison."
+
+[[question]]
+id = "q044"
+query = "What climate-related insurance products or solutions do Munich Re and Swiss Re highlight in their sustainability disclosures?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0133__climate-insurance-solutions",
+    "swiss_re_sustainability_2024__0232__impact-on-the-insurability-of-property-r",
+]
+category = "cross_document"
+notes = "Cross-issuer climate insurance products comparison."
+
+[[question]]
+id = "q045"
+query = "How does Munich Re's underwriting-restrictions framework relate to the PRA's expectations on climate risk identification and assessment in SS5/25?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0052__underwriting-restrictions-and-enhanced-d",
+    "pra_ss5-25_climate__0022__risk-identification-and-assessment",
+]
+category = "cross_document"
+notes = "Regulator-vs-regulated-entity comparison. Munich Re's voluntary restrictions vs PRA's regulatory expectations."
+
+[[question]]
+id = "q046"
+query = "How does Swiss Re's underwriting approach align with the PRA's expectations on scenario governance and controls in SS5/25?"
+expected_refusal = false
+gold_chunk_ids = [
+    "swiss_re_sustainability_2024__0138__approach-in-underwriting",
+    "pra_ss5-25_climate__0031__scenario-governance-controls-and-review",
+]
+category = "cross_document"
+notes = "Regulator-vs-regulated-entity scenario governance comparison."
+
+[[question]]
+id = "q047"
+query = "What renewable energy investment or coverage approaches do Munich Re and Swiss Re disclose in their sustainability reports?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0106__renewable-energy-and-green-bonds",
+    "swiss_re_sustainability_2024__0271__number-of-re-insured-renewable-energy-po",
+]
+category = "cross_document"
+notes = "Cross-issuer renewable energy comparison."
+
+[[question]]
+id = "q048"
+query = "How do the PRA's climate-related disclosure expectations in SS5/25 compare with Munich Re's actual climate disclosure practices?"
+expected_refusal = false
+gold_chunk_ids = [
+    "pra_ss5-25_climate__0033__chapter-5-disclosures",
+    "munich_re_sustainability_2023__0147__3-3-climate-related-disclosure",
+]
+category = "cross_document"
+notes = "Regulator-vs-regulated-entity disclosure comparison. The exact chunk-name match between PRA Chapter 5 and Munich Re's 3-3 climate disclosure section makes this a clean comparative test."
+
+
+# ==== Multi-chunk within-document (q049-q054) ====
+
+[[question]]
+id = "q049"
+query = "What are the PRA's expectations for how firms should identify, assess, measure, and monitor climate-related financial risks?"
+expected_refusal = false
+gold_chunk_ids = [
+    "pra_ss5-25_climate__0022__risk-identification-and-assessment",
+    "pra_ss5-25_climate__0024__risk-measurement-and-monitoring",
+]
+category = "multi_chunk_pra_climate"
+notes = "Two-step risk lifecycle expectation."
+
+[[question]]
+id = "q050"
+query = "How does the PRA expect firms to integrate climate-related risk into their internal capital and liquidity adequacy assessments?"
+expected_refusal = false
+gold_chunk_ids = [
+    "pra_ss5-25_climate__0040__internal-capital-adequacy-assessment-pro",
+    "pra_ss5-25_climate__0041__internal-liquidity-adequacy-assessment-p",
+]
+category = "multi_chunk_pra_climate"
+notes = "ICAAP + ILAAP coverage."
+
+[[question]]
+id = "q051"
+query = "What are the key elements of Munich Re's decarbonization approach and overall sustainability ambition?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0075__decarbonisation-approach-to-investments",
+    "munich_re_sustainability_2023__0151__munich-re-group-ambition-2025-and-beyond",
+]
+category = "multi_chunk_munich_re"
+notes = "Decarbonization approach + group-level ambition."
+
+[[question]]
+id = "q052"
+query = "What does Munich Re's underwriting policy cover for both thermal coal and oil and gas risks?"
+expected_refusal = false
+gold_chunk_ids = [
+    "munich_re_sustainability_2023__0053__thermal-coal",
+    "munich_re_sustainability_2023__0054__oil-and-gas",
+]
+category = "multi_chunk_munich_re"
+notes = "Thermal coal + oil and gas underwriting restrictions, both single-issuer."
+
+[[question]]
+id = "q053"
+query = "How does Swiss Re combine its underwriting approach with its broader monitoring of climate risks?"
+expected_refusal = false
+gold_chunk_ids = [
+    "swiss_re_sustainability_2024__0138__approach-in-underwriting",
+    "swiss_re_sustainability_2024__0258__monitoring-climate-risks",
+]
+category = "multi_chunk_swiss_re"
+notes = "Underwriting approach + climate risk monitoring at the firm level."
+
+[[question]]
+id = "q054"
+query = "How does the PRA expect firms to combine scenario selection with scenario governance and controls?"
+expected_refusal = false
+gold_chunk_ids = [
+    "pra_ss5-25_climate__0028__scenario-selection-and-use-cases__pf00",
+    "pra_ss5-25_climate__0031__scenario-governance-controls-and-review",
+]
+category = "multi_chunk_pra_climate"
+notes = "Scenario selection + scenario governance."
+
+
+# ==== Single-chunk additions (q055-q058) ====
+
+[[question]]
+id = "q055"
+query = "What does the PRA expect regarding climate-related risk treatment in firms' Own Risk and Solvency Assessments?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss5-25_climate__0049__own-risk-and-solvency-assessment-orsa"]
+category = "single_chunk_pra_climate"
+
+[[question]]
+id = "q056"
+query = "How does the PRA expect firms to address climate-related credit risk specifically?"
+expected_refusal = false
+gold_chunk_ids = ["pra_ss5-25_climate__0043__credit-risk"]
+category = "single_chunk_pra_climate"
+
+[[question]]
+id = "q057"
+query = "What does Munich Re say about its issued green bonds?"
+expected_refusal = false
+gold_chunk_ids = ["munich_re_sustainability_2023__0109__munich-re-s-issued-green-bonds"]
+category = "single_chunk_munich_re"
+
+[[question]]
+id = "q058"
+query = "What does Swiss Re say about its single-risk reinsurance offering?"
+expected_refusal = false
+gold_chunk_ids = ["swiss_re_sustainability_2024__0218__single-risk-re-insurance"]
+category = "single_chunk_swiss_re"
+
+
+# ==== Adjacent-refusal additions (q059-q064) ====
+# Each tests whether the model fabricates a specific numeric/named answer
+# when the corpus discusses the topic qualitatively but lacks the specific
+# detail asked for.
+
+[[question]]
+id = "q059"
+query = "What specific dollar amount in catastrophe reinsurance premiums did Munich Re earn from US property risks in 2023?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "Munich Re sustainability report discusses catastrophe insurance qualitatively but does not break out premium revenue by line and geography."
+
+[[question]]
+id = "q060"
+query = "What is the exact percentage of Swiss Re's investment portfolio currently allocated to renewable energy infrastructure?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "Swiss Re discusses renewable energy and investment approach but does not publish a specific portfolio-allocation percentage to renewables."
+
+[[question]]
+id = "q061"
+query = "By what specific year does the PRA require all UK insurers to achieve net-zero in their underwriting portfolios?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "PRA SS5/25 discusses climate expectations but does not mandate a specific net-zero year for underwriting portfolios."
+
+[[question]]
+id = "q062"
+query = "What is the precise probability threshold above which the PRA requires firms to reflect a climate scenario in their ICAAP?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "PRA SS5/25 discusses scenario analysis and ICAAP qualitatively but does not specify probability thresholds for scenario inclusion."
+
+[[question]]
+id = "q063"
+query = "What specific minimum number of distinct climate scenarios does the PRA require insurance firms to model each year?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "PRA SS5/25 discusses scenario selection qualitatively but does not specify a minimum count of scenarios firms must model annually."
+
+[[question]]
+id = "q064"
+query = "What is the exact percentage of Munich Re's gross written premium that came from climate-aligned products in 2023?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_adjacent"
+notes = "Munich Re discusses climate insurance solutions qualitatively but does not publish a specific GWP percentage from climate-aligned products."
+
+
+# ==== Out-of-corpus refusals (q065-q068) ====
+
+[[question]]
+id = "q065"
+query = "What is the solvency capital requirement for a Bermuda special-purpose insurer writing parametric earthquake bonds?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+notes = "Bermuda regulatory regime not in corpus."
+
+[[question]]
+id = "q066"
+query = "What does the New York Department of Financial Services require for cyber insurance disclosures?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+notes = "US state-level cyber insurance regulation not in corpus."
+
+[[question]]
+id = "q067"
+query = "What are the IFRS 17 transition rules for reinsurance contracts written before 2023?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+notes = "IFRS 17 accounting standard not in corpus."
+
+[[question]]
+id = "q068"
+query = "How does the Lloyd's of London market require syndicates to capitalize new lines of business?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_out_of_corpus"
+notes = "Lloyd's syndicate capitalization rules not in corpus."
+
+
+# ==== False-premise refusals (q069-q070) ====
+
+[[question]]
+id = "q069"
+query = "When did Munich Re announce its complete withdrawal from underwriting all fossil fuel risks worldwide?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_false_premise"
+notes = "False premise — Munich Re has not announced complete withdrawal from fossil fuels; the corpus describes specific restrictions on coal and on oil and gas, not a global withdrawal. The model should refuse rather than invent a date or 'never happened' style filler."
+
+[[question]]
+id = "q070"
+query = "What does PRA SS5/25 say about the regulatory capital surcharge specifically imposed on insurers that fail climate scenario testing?"
+expected_refusal = true
+gold_chunk_ids = []
+category = "refusal_false_premise"
+notes = "False premise — PRA SS5/25 does not impose any specific capital surcharge for failing climate scenario tests. The model should refuse rather than fabricate a surcharge amount or mechanism."

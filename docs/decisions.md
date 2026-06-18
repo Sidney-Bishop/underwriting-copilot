@@ -1071,3 +1071,89 @@ related tests (the existing 46 answer.py tests don't pin specific prompt
 text, so this should be drop-in), commit as a separate small feat
 landing prompt v2 as the production default. Not bundled into D015
 because it touches code; D015 is a documentation-only decision.
+
+
+---
+
+## Q13 — STATUS AMENDED 2026-06-18 (urgency elevated)
+
+**Original status:** OPEN, v2 / post-interview work-stream.
+
+**Update:** The Day 5 morning extended benchmark sweep showed the
+retrieval miss rate is **25.0% at N=44** (was 11.5% at N=26). The 8
+additional missed questions are concentrated in the new cross-document
+questions (q042, q044-q048) and the new multi-chunk questions (q051,
+q053). The cross-document misses confirm Q12's diagnosis: queries
+phrased as cross-issuer comparisons ("How do Munich Re and Swiss Re
+differ in their...") embed near OTHER chunks that discuss meta-level
+comparisons, not near the chunks holding the actual comparable
+content.
+
+The Day 5 `excluding_retrieval_misses` subset showed Gemma at 0.798
+vs the full-set 0.598, and Qwen v2 at 0.727 vs 0.545. **20pp of
+locked quality across both models sits behind the retrieval ceiling**
+— a much sharper picture than the 9pp lift Day 3 showed at the
+smaller N.
+
+**Status amendment:** Q13's three remediation paths (LLM query
+expansion / HyDE; cross-encoder reranker; BGE-M3 multi-vector via Q7)
+remain the same. What changes is **priority**: Q13 is now the highest-
+value v2 work-stream by a comfortable margin. The retrieval ceiling
+caps headline citation_recall at ~0.80; closing it could move the
+artefact from "research-grade" to "production-candidate" on this
+corpus.
+
+**Remediation triage suggestion for v2:**
+
+1. **Cross-encoder reranker first** (lowest-cost, highest-likely
+   payoff). Fetch a wider candidate set (200+) and rerank with
+   bge-reranker-v2-m3 or mxbai-rerank. Estimated 3-4 hours; doesn't
+   break MLX-everywhere (D009) because the reranker is small enough
+   to run on CPU/MPS with reasonable latency.
+
+2. **LLM query expansion second** if reranker doesn't fully close
+   the cross-document gap. Could be implemented with the production
+   Gemma 31B model itself (one extra inference call adding ~3-5s
+   per query, acceptable for analyst-research workloads).
+
+3. **Full multi-vector via Q7** third. The largest refactor; deferred
+   unless 1+2 prove insufficient.
+
+This triage isn't lodged as a decision — it's the recommended order
+for v2 scoping. The decision would be lodged as D016+ at v2 kickoff.
+
+---
+
+## D015 — STATUS NOTE 2026-06-18 (rationale strengthened by extended sweep)
+
+D015 (production model default Gemma 4 31B IT) was lodged on Day 4 on
+the basis of Day 3 data showing within-document parity plus weakly-
+held cross-doc edge plus zero hallucinations. The Day 5 morning
+extended sweep at N=44 strengthens the rationale across the board:
+
+| Subset | Day 3 (N=21-26) | Day 5 (N=44, extended) |
+|---|---|---|
+| Single-chunk retrievable | both 1.000 (parity) | Gemma 1.000, Qwen v2 0.941 (5.9pp Gemma edge) |
+| Multi-chunk | both 0.750 (parity, n=6) | Gemma 0.583, Qwen v2 0.542 (4.1pp Gemma edge, n=12) |
+| Within-document retrievable | both 0.929 (parity, n=21) | Gemma 0.889, Qwen v2 0.833 (5.6pp Gemma edge, n=27) |
+| Cross-document | Gemma 0.417 vs Qwen 0.000 (n=2, weakly held) | Gemma 0.233 vs Qwen 0.150 (n=10, 8.3pp Gemma edge) |
+| Hallucinations (full sweep) | Gemma 0, Qwen v2 3 | Gemma 0, Qwen v2 7 |
+| Refusal correctness | 56/56 across 4 cells | 104/104 across 4 cells |
+| Latency (mean answerable) | Gemma 20.7s, Qwen 3.4s | Gemma 22.9s, Qwen 3.4s |
+
+D015's substantive conclusion stands: Gemma is the production default;
+Qwen via env-var override remains the latency-budget escape hatch. The
+extended data adds a margin of confidence that wasn't there before —
+Gemma is the higher-quality model on *every* answerable subset, not
+just cross-document.
+
+No code change required; the D015 decision in `answer.py` (Gemma as
+`DEFAULT_MODEL`) is unchanged.
+
+The Day 3 within-document parity claim that motivated the
+"equivalent on most workloads" framing in D015 was a small-sample
+artifact. The current honest framing is: Gemma carries a consistent
+~5pp quality edge across answerable workloads, plus the 0-vs-7
+hallucination floor difference; Qwen carries a ~6× latency advantage.
+For an analyst-research deployment the quality edges accumulate to a
+clearer recommendation than the Day 3 framing supported.
