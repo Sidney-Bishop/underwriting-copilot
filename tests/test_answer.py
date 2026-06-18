@@ -4,7 +4,19 @@ The pure helpers (parsing, validation, refusal detection, prompt
 building) are exercised in isolation. The ``AnswerGenerator`` integration
 is tested with a subclass that overrides ``_call_llm`` to return canned
 responses — the actual HTTP path is exercised by the demo run against
-the live mlx-lm.server.
+the live oMLX server.
+
+Three contracts are pinned with extra care because they govern
+behaviour that's hard to spot if it silently regresses:
+
+  1. ``chat_template_kwargs.enable_thinking`` in the payload — without
+     this, Qwen3-family models emit reasoning traces that consume the
+     token budget. Verified empirically in 2026-06.
+  2. Model resolution precedence: explicit > env var > default —
+     Day 3 eval harness depends on this for clean per-iteration model
+     selection.
+  3. ``hallucinated_citations`` partitioning — the load-bearing eval
+     signal of LLM confabulation.
 """
 
 from __future__ import annotations
@@ -15,10 +27,13 @@ import pytest
 
 from underwriting_copilot.answer import (
     CITATION_REGEX,
+    DEFAULT_MODEL,
+    MODEL_ENV_VAR,
     REFUSAL_PHRASE,
     AnswerGenerator,
     AnswerResult,
     _build_user_prompt,
+    _resolve_model,
     detect_refusal,
     parse_citations,
     validate_citations,
@@ -66,14 +81,44 @@ class _FakeAnswerGenerator(AnswerGenerator):
     """AnswerGenerator with ``_call_llm`` overridden to return a fixed
     response — keeps the unit tests off the network."""
 
-    def __init__(self, retriever, canned_response: str) -> None:
-        super().__init__(retriever=retriever)
+    def __init__(self, retriever, canned_response: str, **kwargs) -> None:
+        super().__init__(retriever=retriever, **kwargs)
         self._canned_response = canned_response
 
     def _call_llm(self, user_prompt: str) -> str:
         # Capture the prompt for assertion in tests that care.
         self.last_user_prompt = user_prompt
         return self._canned_response
+
+
+# ============================================================================
+# _resolve_model  — explicit > env var > default precedence
+# ============================================================================
+
+
+class TestResolveModel:
+    def test_default_when_no_explicit_and_no_env(self, monkeypatch) -> None:
+        # Clear the env var defensively in case the host shell has it set.
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
+        assert _resolve_model(None) == DEFAULT_MODEL
+
+    def test_env_var_overrides_default(self, monkeypatch) -> None:
+        monkeypatch.setenv(MODEL_ENV_VAR, "env-var-model")
+        assert _resolve_model(None) == "env-var-model"
+
+    def test_explicit_arg_wins_over_env_var(self, monkeypatch) -> None:
+        monkeypatch.setenv(MODEL_ENV_VAR, "env-var-model")
+        assert _resolve_model("explicit-model") == "explicit-model"
+
+    def test_explicit_arg_wins_when_no_env_var(self, monkeypatch) -> None:
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
+        assert _resolve_model("explicit-model") == "explicit-model"
+
+    def test_empty_string_env_var_falls_back_to_default(self, monkeypatch) -> None:
+        # An empty UNDERWRITING_COPILOT_MODEL= shouldn't silently use ""
+        # as the model name — that would be a confusing failure mode.
+        monkeypatch.setenv(MODEL_ENV_VAR, "")
+        assert _resolve_model(None) == DEFAULT_MODEL
 
 
 # ============================================================================
@@ -235,13 +280,57 @@ class TestBuildUserPrompt:
 
 
 # ============================================================================
+# _build_payload  — pins the chat_template_kwargs contract
+# ============================================================================
+
+
+class TestBuildPayload:
+    def test_default_disables_thinking(self, monkeypatch) -> None:
+        # Default per DEFAULT_ENABLE_THINKING = False.
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
+        gen = AnswerGenerator(retriever=_FakeRetriever([]))
+        payload = gen._build_payload("test prompt")
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+    def test_enable_thinking_flag_respected(self, monkeypatch) -> None:
+        # Explicit override must propagate to the payload — Day 3 eval
+        # may sweep this flag to measure thinking-mode contribution.
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
+        gen = AnswerGenerator(
+            retriever=_FakeRetriever([]),
+            enable_thinking=True,
+        )
+        payload = gen._build_payload("test prompt")
+        assert payload["chat_template_kwargs"] == {"enable_thinking": True}
+
+    def test_payload_includes_system_and_user_messages(self, monkeypatch) -> None:
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
+        gen = AnswerGenerator(retriever=_FakeRetriever([]))
+        payload = gen._build_payload("USER PROMPT MARKER")
+        messages = payload["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"] == "USER PROMPT MARKER"
+
+    def test_payload_includes_model_and_sampling(self, monkeypatch) -> None:
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
+        gen = AnswerGenerator(retriever=_FakeRetriever([]), model="custom_model")
+        payload = gen._build_payload("p")
+        assert payload["model"] == "custom_model"
+        assert payload["temperature"] == 0.0
+        assert payload["max_tokens"] == 1024
+        assert payload["stream"] is False
+
+
+# ============================================================================
 # AnswerGenerator (mocked LLM, mocked retriever)
 # ============================================================================
 
 
 class TestAnswerGenerator:
-    def test_pre_llm_refusal_when_no_hits(self) -> None:
+    def test_pre_llm_refusal_when_no_hits(self, monkeypatch) -> None:
         # No hits returned → LLM is never called, refusal returned directly.
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=[]),
             canned_response="(this should never be returned)",
@@ -253,7 +342,8 @@ class TestAnswerGenerator:
         assert result.used_chunks == []
         assert REFUSAL_PHRASE in result.answer
 
-    def test_records_valid_citations(self) -> None:
+    def test_records_valid_citations(self, monkeypatch) -> None:
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=[_hit("c1"), _hit("c2")]),
             canned_response="The answer is X [c1] and Y [c2].",
@@ -264,9 +354,10 @@ class TestAnswerGenerator:
         assert result.hallucinated_citations == []
         assert len(result.used_chunks) == 2
 
-    def test_records_hallucinated_citations(self) -> None:
+    def test_records_hallucinated_citations(self, monkeypatch) -> None:
         # The LLM cites a chunk that wasn't in the context. Caught by the
         # validator — this is the load-bearing eval signal.
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=[_hit("c1")]),
             canned_response="X is true [c1] and also Y [c99].",
@@ -275,7 +366,8 @@ class TestAnswerGenerator:
         assert result.citations == ["c1"]
         assert result.hallucinated_citations == ["c99"]
 
-    def test_refusal_detected(self) -> None:
+    def test_refusal_detected(self, monkeypatch) -> None:
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=[_hit("c1")]),
             canned_response=f"{REFUSAL_PHRASE}.",
@@ -285,16 +377,42 @@ class TestAnswerGenerator:
         assert result.citations == []
         assert result.hallucinated_citations == []
 
-    def test_model_name_recorded_in_result(self) -> None:
+    def test_default_model_resolves_to_gemma(self, monkeypatch) -> None:
+        # Pins the Day 2 N=3 finding: Gemma-4-31B-it is the default
+        # because it had clean citation-format discipline where
+        # Qwen3.6-35B-A3B-4bit did not.
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=[_hit("c1")]),
             canned_response="An answer [c1].",
         )
         result = gen.answer("Q")
-        # Default model per D013.
-        assert result.model == "Qwen3.6-35B-A3B-4bit"
+        assert result.model == "gemma-4-31B-it-MLX-6bit"
+        assert DEFAULT_MODEL == "gemma-4-31B-it-MLX-6bit"
 
-    def test_used_chunks_passed_through(self) -> None:
+    def test_env_var_drives_result_model(self, monkeypatch) -> None:
+        # Pins the eval-harness contract: the model recorded in the result
+        # is the one resolved at construction (env var path).
+        monkeypatch.setenv(MODEL_ENV_VAR, "swept-model-id")
+        gen = _FakeAnswerGenerator(
+            retriever=_FakeRetriever(hits=[_hit("c1")]),
+            canned_response="An answer [c1].",
+        )
+        result = gen.answer("Q")
+        assert result.model == "swept-model-id"
+
+    def test_explicit_model_arg_wins_over_env_var(self, monkeypatch) -> None:
+        monkeypatch.setenv(MODEL_ENV_VAR, "env-var-model")
+        gen = _FakeAnswerGenerator(
+            retriever=_FakeRetriever(hits=[_hit("c1")]),
+            canned_response="An answer [c1].",
+            model="explicit-arg-model",
+        )
+        result = gen.answer("Q")
+        assert result.model == "explicit-arg-model"
+
+    def test_used_chunks_passed_through(self, monkeypatch) -> None:
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         hits = [_hit("c1"), _hit("c2"), _hit("c3")]
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=hits),
@@ -303,7 +421,8 @@ class TestAnswerGenerator:
         result = gen.answer("Q", top_k=3)
         assert [h.chunk_id for h in result.used_chunks] == ["c1", "c2", "c3"]
 
-    def test_top_k_limits_retrieved_chunks(self) -> None:
+    def test_top_k_limits_retrieved_chunks(self, monkeypatch) -> None:
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         hits = [_hit(f"c{i}") for i in range(10)]
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=hits),
@@ -312,9 +431,10 @@ class TestAnswerGenerator:
         result = gen.answer("Q", top_k=3)
         assert len(result.used_chunks) == 3
 
-    def test_user_prompt_contains_retrieved_chunks(self) -> None:
+    def test_user_prompt_contains_retrieved_chunks(self, monkeypatch) -> None:
         # Verify the prompt sent to the LLM actually includes the chunks
         # — not silently dropping context.
+        monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
         gen = _FakeAnswerGenerator(
             retriever=_FakeRetriever(hits=[_hit("c1", text="UNIQUE_MARKER_TEXT")]),
             canned_response="X [c1].",

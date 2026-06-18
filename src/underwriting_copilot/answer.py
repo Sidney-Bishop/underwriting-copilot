@@ -8,18 +8,32 @@ Per **D013**:
   - Model + endpoint injected at construction; no hardcoded model.
 
 Talks to the OpenAI-compatible chat-completions surface that oMLX exposes
-locally (per ``serving_local_models.md``). oMLX runs on Apple Silicon and
-also speaks an Anthropic-compatible API on the same host:port — using the
-OpenAI surface here because it accepts per-request sampling parameters
-end-to-end, which the Anthropic surface does not for this server.
+locally (per ``serving_local_models.md``). Single-shot: one prompt in,
+one answer out. No streaming, multi-turn, or tool use.
 
-Single-shot: one prompt in, one answer out. No streaming, multi-turn, or
-tool use.
+**Model resolution.** Precedence at construction time (12-factor):
+explicit ``model=`` argument > ``UNDERWRITING_COPILOT_MODEL`` environment
+variable > ``DEFAULT_MODEL`` constant. Resolved lazily inside ``__init__``
+(not at import time) so the eval harness can mutate the env var mid-process
+if needed.
+
+**Qwen3.6 thinking behaviour.** Qwen3-family models default to
+``enable_thinking=true`` in their chat template, which emits a
+``<think>...</think>`` block before the final answer. For rigid-format
+tasks like citation enforcement this is wasteful — the reasoning
+consumes the token budget that should hold the answer. We disable it
+by sending ``chat_template_kwargs: {"enable_thinking": false}`` in the
+request body. The soft switch (prepending ``/no_think`` to the user
+message) was verified to NOT work on Qwen+oMLX in a sibling project
+(``Chat_summarization`` probe, 2026-06); the server-side hard switch
+does. Default ``enable_thinking=False``; harmless on non-Qwen models
+whose chat templates don't reference the kwarg.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
 import time
 from pathlib import Path
@@ -31,10 +45,17 @@ from underwriting_copilot.retrieve import Retriever, RetrievalHit
 
 # ---- Module constants ---------------------------------------------------
 
-#: Default model name to pass in the chat-completions request. Override via
-#: ``AnswerGenerator(model=...)``. Per Q9, Day 3 eval will sweep across
-#: multiple models, so this default is a starting point, not a verdict.
-DEFAULT_MODEL = "Qwen3.6-35B-A3B-4bit"
+#: Hardcoded default model. Day 2 N=3 demo showed gemma-4-31B-it-MLX-6bit
+#: produces perfect citation-format discipline (18 valid, 0 hallucinated
+#: on query 1; 12/0 on query 2) where Qwen3.6-35B-A3B-4bit produced
+#: format drift even with enable_thinking=False (0 valid citations, 13
+#: hallucinated chunk_id placeholders on query 2). Per Q9, Day 3 eval
+#: will replicate with larger N and harder cases.
+DEFAULT_MODEL = "gemma-4-31B-it-MLX-6bit"
+
+#: Env var that overrides ``DEFAULT_MODEL`` but loses to an explicit
+#: ``model=`` constructor argument. Read at constructor call time.
+MODEL_ENV_VAR = "UNDERWRITING_COPILOT_MODEL"
 
 #: oMLX's default bind address (``http://127.0.0.1:8000``) plus the ``/v1``
 #: prefix that the OpenAI-compatible API uses. The ``/chat/completions``
@@ -49,6 +70,12 @@ DEFAULT_API_KEY = "claude"
 DEFAULT_TOP_K = 5
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MAX_TOKENS = 1024
+
+#: Qwen3-family thinking toggle default. Off because our prompt enforces
+#: rigid output format and the thinking trace burns tokens that should
+#: hold the cited answer. Harmless on non-Qwen models (chat templates
+#: that don't reference ``enable_thinking`` just ignore the kwarg).
+DEFAULT_ENABLE_THINKING = False
 
 #: The single fixed refusal phrase per D013. The detector and the
 #: system prompt both reference this constant — they are one contract.
@@ -86,6 +113,23 @@ respond with EXACTLY this phrase and nothing else:
 I cannot answer this from the provided sources.
 
 Keep answers concise. Quote source text only when exact wording matters."""
+
+
+# ---- Model resolution helper -------------------------------------------
+
+
+def _resolve_model(explicit: str | None) -> str:
+    """Apply 12-factor precedence: explicit > env var > hardcoded default.
+
+    Read at constructor call time, not import time, so the eval harness
+    can set the env var mid-process if it wants to.
+    """
+    if explicit is not None:
+        return explicit
+    from_env = os.environ.get(MODEL_ENV_VAR)
+    if from_env:
+        return from_env
+    return DEFAULT_MODEL
 
 
 # ---- Result type --------------------------------------------------------
@@ -207,29 +251,34 @@ class AnswerGenerator:
     def __init__(
         self,
         retriever: Retriever,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         api_base: str = DEFAULT_API_BASE,
         api_key: str = DEFAULT_API_KEY,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         system_prompt: str = SYSTEM_PROMPT,
+        enable_thinking: bool = DEFAULT_ENABLE_THINKING,
     ) -> None:
         self.retriever = retriever
-        self.model = model
+        self.model = _resolve_model(model)
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
+        self.enable_thinking = enable_thinking
 
-    def _call_llm(self, user_prompt: str) -> str:
-        """Single OpenAI-compatible chat completion call against oMLX.
+    def _build_payload(self, user_prompt: str) -> dict[str, Any]:
+        """Construct the JSON body for the chat-completions request.
 
-        Designed to be overridden in tests with a canned-response stub
-        (see ``_FakeAnswerGenerator`` in the test suite).
+        Includes ``chat_template_kwargs.enable_thinking`` to control
+        Qwen3.6-family thinking behaviour. Harmless on non-Qwen models;
+        their chat templates simply don't reference the kwarg.
+
+        Extracted as a method (rather than inlined into ``_call_llm``)
+        so the payload contract can be unit-tested without an HTTP mock.
         """
-        url = f"{self.api_base}/chat/completions"
-        payload: dict[str, Any] = {
+        return {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
@@ -238,7 +287,17 @@ class AnswerGenerator:
             "temperature": 0.0,
             "max_tokens": self.max_tokens,
             "stream": False,
+            "chat_template_kwargs": {"enable_thinking": self.enable_thinking},
         }
+
+    def _call_llm(self, user_prompt: str) -> str:
+        """Single OpenAI-compatible chat completion call against oMLX.
+
+        Designed to be overridden in tests with a canned-response stub
+        (see ``_FakeAnswerGenerator`` in the test suite).
+        """
+        url = f"{self.api_base}/chat/completions"
+        payload = self._build_payload(user_prompt)
         headers = {"Authorization": f"Bearer {self.api_key}"}
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(url, json=payload, headers=headers)
@@ -345,6 +404,9 @@ def _demo() -> None:
 
     Requires oMLX to be running with the configured model loaded — see
     ``serving_local_models.md``. Run: ``uv run python -m underwriting_copilot.answer``.
+
+    Override the model at the shell:
+        UNDERWRITING_COPILOT_MODEL=Qwen3.6-35B-A3B-4bit uv run python -m underwriting_copilot.answer
     """
     repo_root = Path(__file__).resolve().parents[2]
     retriever = Retriever(
@@ -353,8 +415,16 @@ def _demo() -> None:
         verbose=True,
     )
     generator = AnswerGenerator(retriever=retriever)
-    print(f"\nUsing model:  {generator.model}")
-    print(f"API endpoint: {generator.api_base}\n")
+
+    # Report which model-resolution path won, for demo clarity.
+    env_value = os.environ.get(MODEL_ENV_VAR)
+    if env_value:
+        source = f"env var {MODEL_ENV_VAR}"
+    else:
+        source = "DEFAULT_MODEL constant"
+    print(f"\nUsing model:     {generator.model}  (resolved from {source})")
+    print(f"API endpoint:    {generator.api_base}")
+    print(f"enable_thinking: {generator.enable_thinking}\n")
 
     demo_queries = [
         # Should answer (PRA climate guidance is in the corpus)

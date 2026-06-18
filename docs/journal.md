@@ -458,3 +458,117 @@ bb125ae feat: index.py — Qdrant + BM25 corpus index per D012
 ```
 
 Seventeen commits today. Tomorrow's first commit will be journal append for Day 2.
+
+
+---
+
+# Day 3 (preliminary) — 2026-06-18 morning into early afternoon
+
+This is a preliminary Day 3 entry covering the LLM answer-generation work and the model-choice probe. The full Day 3 entry (eval harness + decisive model selection + Q9 resolution) will come at end-of-day after the harness runs.
+
+## Where we started
+
+End of Day 2 at commit `e8fee72` (journal append). Retrieval pipeline working, 148 tests green, 22 commits across the day, Q7 and Q8 open. Q8 closed first thing this morning via two web searches and a one-line metadata correction.
+
+## Q8 closure
+
+Two supersession claims in `corpus_metadata.toml` needed scrutiny: SS1/21 → SS1/22, and SS3/19 → SS5/25. Web search showed:
+
+- **SS1/21 → SS1/22 was wrong.** SS1/22 exists but is titled "Trading activity wind-down" (May 2022) — unrelated to operational resilience. SS1/21 is the current operative document; transitional period ended 31 March 2025. Fix: dropped the `superseded_by = "SS1/22"` line from SS1/21's metadata entry. Re-indexed; verified the previously-failing operational-resilience query now returns three SS1/21 sections in the top-5.
+- **SS3/19 → SS5/25 was correct.** Multiple authoritative sources (PwC, Milliman, Clifford Chance, MHA, Forvis Mazars, and SS5/25's own text) confirm SS5/25 published 3 December 2025 replaces SS3/19 in its entirety. No fix needed.
+
+Lesson: one of two claimed supersessions was wrong. The orphan check that caught the metadata adapter bug on Day 2 was for *structure*; this Q8 finding was about *factual content*. Different failure mode, same family — metadata accuracy matters beyond schema validity.
+
+## D013 + Q9 — answer.py design contracts
+
+Before writing code, lodged:
+
+- **D013**: four contract-shape decisions for `answer.py` — citation format `[chunk_id]`, refusal phrase exact match, citation validation as eval signal, model + endpoint injected at construction.
+- **Q9**: should we pull a 7-14B-class instruction-tuned model before the Day 3 eval harness? The brief flags 7-14B as the sweet spot for disciplined-faithfulness tasks; the served oMLX roster has no candidate in that range (smallest is 26B-A4B).
+
+D013 recorded the wrong endpoint default — `8080` (mlx-lm.server) instead of `8000` (oMLX). That was my error; corrected in code before any live demo ran. D013 is append-only history, so the wrong port stays in the record with this journal entry as the correction note.
+
+## answer.py and the live-demo loop
+
+Built `answer.py` (~270 LOC) plus 35 unit tests. The module surface:
+
+- `parse_citations(text)` extracts `[chunk_id]` tokens via regex.
+- `validate_citations(citations, known_ids)` partitions into `(valid, hallucinated)`. The hallucinated list is the load-bearing eval signal of LLM confabulation.
+- `detect_refusal(text)` exact-matches against `REFUSAL_PHRASE` with whitespace/punctuation tolerance.
+- `AnswerGenerator` class holds Retriever + model + endpoint, talks to oMLX's OpenAI-compatible API.
+
+The live demo immediately revealed three real findings, each requiring a code or config change before the next iteration.
+
+### Finding 1 — wrong endpoint assumption
+
+I'd assumed mlx-lm.server on port 8080. The actual served stack is oMLX on port 8000 with literal Bearer token `claude`, documented in `serving_local_models.md` at `/Users/jroche/Workspace/Python/tst_llm/`. Found via `conversation_search`. Two constants changed. Should have searched before guessing.
+
+### Finding 2 — thinking-trace consumed the token budget
+
+First Qwen3.6-35B-A3B-4bit run produced 15.8s on query 1 with the entire 1024-token budget consumed by `Here's a thinking process: 1. Analyze user question...` reasoning trace. The final answer was truncated mid-citation.
+
+The fix is not "raise max_tokens" (treats symptom) or "tell the model not to think" (Qwen ignores prompt-level `/no_think` per a Chat_summarization probe done 2026-06-07). The fix is `chat_template_kwargs: {"enable_thinking": False}` in the request body, which oMLX honours as a server-side hard switch.
+
+Added `enable_thinking` constructor parameter (default False), `_build_payload` extracted as method for unit-testing, four payload tests added.
+
+### Finding 3 — Qwen3.6 format drift even with thinking off
+
+With thinking disabled, Qwen3.6-35B-A3B-4bit was fast (6.8s) but produced format drift:
+
+- Query 1: emitted `[chunk_id=pra_ss5-25_climate__...]` — added a `chunk_id=` prefix the regex doesn't parse. 0 valid citations.
+- Query 2: emitted `[chunk_id_1]`, `[chunk_id_5]` — collapsed real chunk_ids to abstract placeholder names. 0 valid citations, 13 hallucinated placeholders.
+
+The query 3 refusal was perfect on both runs.
+
+Swapped to `gemma-4-31B-it-MLX-6bit` (instruction-tuned variant, different family). Same prompt, same chunks, same temperature 0. Results:
+
+- Query 1: **18 valid citations, 0 hallucinated.** Substantively comprehensive answer covering proportionality, ORSA integration, scenario design, governance, use cases. 57.1s (cold load) → 31.3s (warm).
+- Query 2: **12 valid citations, 0 hallucinated.** Clean Fit / Proper / Policies structure. 31.3s.
+- Query 3: **Refusal in 7.7s, exact phrase.**
+
+Same prompt, different model, dramatically different format discipline.
+
+## The finding worth recording — with appropriate epistemic weight
+
+**Preliminary on N=3 queries: instruction-tuned `it`-suffix Gemma-4-31B outperformed thinking-style Qwen3.6-35B-A3B-4bit on rigid citation-format discipline even with thinking disabled. Family axis (`it` vs `A3B`-thinking-style) appears more relevant than size axis (31B vs 35B) on this task.**
+
+The data supports this claim *as preliminary*, not as a settled finding. Three confounds limit how strongly it can be stated:
+
+1. **Same prompt template.** Both models saw the same system prompt and user-message structure. A differently-worded prompt might surface Qwen3.6's strength on the same task — what we measured includes prompt-specific bias.
+2. **High keyword overlap in two of three queries.** PRA climate scenario analysis and EIOPA fit-and-proper both have heavy domain-vocabulary overlap with the retrieved chunks (the "easy" cases for retrieval and citation). Harder cases — partial-information questions, cross-chunk synthesis, ambiguous topics — were not tested.
+3. **N=3 is small.** Format drift on Qwen was binary (perfect vs imperfect) on every query, not borderline; but three queries from a single domain do not generalise to the model's behaviour across the full eval space.
+
+Day 3 eval will replicate across (a) larger N (40+ benchmark queries planned per the original Day 3 design), (b) harder cases including partial-information and cross-chunk-synthesis questions, and (c) at least one more model from each family to reduce per-model-quirk confound.
+
+## Code state at the end of this preliminary entry
+
+`answer.py` v4 lands at the end of this work block:
+
+- Default model `gemma-4-31B-it-MLX-6bit` (was `Qwen3.6-35B-A3B-4bit` in D013; superseded by data).
+- Environment variable `UNDERWRITING_COPILOT_MODEL` overrides the default at construction time, but loses to an explicit `model=` arg. 12-factor precedence. Lazy resolution inside `__init__`, not at import time.
+- `chat_template_kwargs.enable_thinking` always sent in payload (harmless on non-Qwen models).
+- 39 unit tests covering pure functions, payload construction, model resolution precedence, and AnswerGenerator integration.
+
+## Q9 status
+
+Still open. Today's data weakly supports the brief's underlying intuition ("disciplined-faithfulness tasks favour well-tuned instruction models over larger thinking-style models") along the **family axis** rather than the **size axis** the brief specifically called out. The size-axis claim (7-14B sweet spot) remains untested — the served roster's smallest candidate is 26B-A4B.
+
+Decision on whether to pull a 12B-class IT model before the Day 3 eval still deferred to before-eval-design. Today's finding gives more reason to do it — testing a 12B-IT model alongside Gemma-4-31B-IT would isolate the size axis cleanly with family held constant.
+
+## Cross-project read-across
+
+Cedant runs on the same MLX serving stack as `tst_llm` and uses some of the same models. Today's Cedant finding has a useful read-across for `tst_llm` Q21 (the agentic-axis Qwen3.6-vs-Qwen3-Coder question): the model that wins on flexible agentic tasks might not win on rigid-format tasks, and Cedant's data is the first data point in this project family supporting that hypothesis. Delivered a paragraph to land in `tst_llm`'s journal next time that project is touched.
+
+## Where we stand
+
+Mid-Day-3. answer.py shipped, model-resolution architecture is correct for the eval harness, preliminary model finding recorded with appropriate caveats. Next concrete moves: build the eval harness, design the sweep matrix, run replication, decide Q9, write the full Day 3 journal entry.
+
+## Commits since end-of-Day-2
+
+```
+823c474 fix: Q8 metadata — SS1/21 is not superseded by SS1/22
+a2afe76 docs: Q8 closed — SS1/21 metadata fixed, SS3/19→SS5/25 verified
+976e3b8 docs: D013 + Q9 — answer.py contracts and Day 3 model-prep question
+8c6d95f feat: answer.py — LLM cited-answer generation per D013
+<next commit> feat: answer.py v4 — Gemma default, env-var override, payload thinking toggle
+```
