@@ -631,3 +631,72 @@ Two concerns surface:
 ### What this is not
 
 This is not a bug in `retrieve.py` or in the filter logic. The filter does exactly what D012 said it should. The question is whether the metadata feeding the filter is *factually accurate* — and whether the policy (silently hide superseded docs by default) plays well with a corpus that is not yet complete.
+
+
+## D013 — answer.py design contracts: citation format, refusal phrase, model+endpoint configurability
+
+**Date:** 2026-06-18  
+**Status:** Active
+
+### Decision
+
+Four contract-shape decisions for `src/underwriting_copilot/answer.py`:
+
+1. **Citation format: `[chunk_id]` inline with claims.** The exact bracket-and-id form is the contract between the prompt template (which tells the LLM to use this format) and the citation validator (which parses it back out). Changing the format requires changing both sides.
+
+2. **Refusal phrase: exact match of "I cannot answer this from the provided sources."** When retrieved chunks don't contain sufficient information to answer, the LLM must respond with this exact sentence. The detector matches on this exact string (after stripping trailing whitespace/punctuation) for the `refused=True` signal. The prompt template instructs the LLM in these exact words.
+
+3. **Citation validation guardrail.** Every `[chunk_id]` cited in the answer must exist in the set of chunks fed to the LLM. Any citation pointing to a chunk_id that wasn't in the context is recorded as a `hallucinated_citation` — a quality signal the Day 3 eval harness will score against.
+
+4. **Model + endpoint injected at construction.** `AnswerGenerator(retriever, model="...", api_base="...")` — no hardcoded model name. Day 3's eval harness will sweep across multiple models per D003 and Q9, so model-id-as-constructor-arg is the architecturally honest choice from day one. Defaults: model `Qwen3.6-35B-A3B-4bit` (in the served roster, known-good for instruction-following); endpoint `http://127.0.0.1:8080/v1` (mlx-lm.server default). Both overridable.
+
+### Why these specific choices
+
+- **Citation format `[chunk_id]`**: simple, regex-parseable, and unlikely to appear naturally in regulatory text. Alternative forms (`{chunk_id}`, `<cite>...</cite>`) add complexity without benefit at this stage.
+- **Refusal phrase exact-match**: fuzzy refusal detection (e.g. semantic similarity against "I don't know") is more robust but introduces ambiguity. Exact-match makes eval-harness scoring deterministic. The cost is that the LLM must follow the format precisely; the prompt is unambiguous about this.
+- **Hallucinated-citation detection**: the main guardrail against LLM confabulation. Even a perfectly-formatted citation is worthless if it doesn't reference a real chunk. One set-membership test per citation; cheap.
+- **Configurability**: hardcoding the model in `answer.py` would force code edits to swap models during eval, which conflicts with the project's own Day 3 architecture. Model name and URL belong in runtime config, not in code.
+
+### Non-goals (deferred, not in answer.py)
+
+- Streaming responses (no UX in scope yet).
+- Multi-turn conversations (single-shot Q→A only).
+- Reranking (Q7's territory; revisit if eval shows ceiling).
+- LLM-as-judge scorers (Day 3 eval may add; not part of `answer.py`).
+
+### Trade-offs
+
+- **Exact-match refusal phrase is brittle.** If the LLM produces "I cannot answer this from the provided sources" with a different terminal punctuation or wraps it in extra words, exact match fails. Mitigation: prompt is unambiguous; detector strips trailing whitespace and `.!?` before comparing.
+- **Hardcoded citation format taxes smaller models.** If eval shows format-drift failures (e.g. uses `(chunk_id)` instead of `[chunk_id]`), the prompt needs tightening, not the format relaxed — relaxing makes the parser ambiguous against naturally-occurring brackets in text.
+
+### When to revisit
+
+- If eval shows >10% of otherwise-valid answers scored as "no citations" because of format drift: revisit prompt strictness, not parser tolerance.
+- If a different model is selected as default and produces refusals with different phrasing: update prompt and detector together (they are one contract).
+- If multi-turn conversations become a requirement (post-Day-5): this entire module is single-shot and a new wrapper would be needed.
+
+
+## Q9 — Should we pull a 7-14B-class instruction-tuned model before the Day 3 eval harness runs?
+
+**Date:** 2026-06-18  
+**Status:** Open
+
+### Background
+
+The Cedant brief observes that for constrained extract-and-synthesise-with-citations tasks, a well-tuned 7-14B model will often outperform a less-tuned larger model. Disciplined instruction-following matters more than raw reasoning capacity for this specific task shape (single-shot, small context, strict format rules, refuse-on-insufficient-context).
+
+The current served oMLX roster (per commit `2991730`, snapshot 2026-06-08) does not include a clean candidate in the 7-14B range. The Gemma 4 family on disk is 26B (A4B) and 31B; no Qwen3-8B; no Gemma 4 12B IT.
+
+For today's Day 2 demo, `answer.py` defaults to `Qwen3.6-35B-A3B-4bit` per D013 — well above the brief's sweet spot but served, instruction-following, and known-good.
+
+### Resolution criteria
+
+Before the Day 3 eval harness sweep is designed:
+
+- **Step 1.** Decide whether to pull a 12B-class instruction-tuned MLX-quantised model (e.g. Gemma 4 12B IT, Qwen3-7B/14B variants). Estimated cost: 15-30 minutes of `huggingface-cli download` plus an oMLX config entry. Reversible.
+- **Step 2A (if pulled):** include it in the Day 3 eval sweep alongside Qwen3.6-35B-A3B-4bit so the brief's prediction about the sweet spot is tested empirically. This is the load-bearing data point — if a 12B beats 35B on Cedant's metrics, the brief's claim is validated; if it doesn't, the project's model-sizing intuition is wrong for this corpus.
+- **Step 2B (if not pulled):** document in `evaluation.md` that the eval was run only against served models in the ≥26B class. Note that the brief's 7-14B-sweet-spot claim was not tested for this corpus, so any conclusion about model size is unsupported.
+
+### When to revisit
+
+- **Day 3 morning, before designing the eval sweep matrix.** The decision is cheap to make and cheap to reverse, but it shapes the Day 3 eval's headline finding.
