@@ -24,3 +24,6 @@ publications/*/.quarto/
 .vscode/
 scratch/
 graphify-out/
+
+# Eval sweep outputs
+eval/results/
