@@ -520,3 +520,83 @@ IDF requires global statistics: `idf(t) = log((N - df(t) + 0.5) / (df(t) + 0.5) 
 
 - Day 3 eval — if the sparse channel underperforms expectations on the benchmark, candidates to adjust are (in order of effort): BM25 parameters, stopword list, then tokeniser (only as a last resort).
 - If synthetic documents per D003 substantially change the corpus shape (e.g. lots of new abbreviations or product names), the stopword list may need expansion.
+
+
+## D012 — Index module design: full-text payload, scratch-located Qdrant, one-shot rebuild
+
+**Date:** 2026-06-18  
+**Status:** Active
+
+### Decision
+
+Three sub-decisions for `src/underwriting_copilot/index.py`:
+
+1. **Payload schema includes the chunk text.** Each Qdrant point's payload carries the 16 fields needed for retrieval-time filtering, citation rendering, and inspection — *including* the chunk's full text. Retrieval is then self-contained: one Qdrant query returns everything needed to render a cited answer, no second-pass lookup.
+
+2. **Persistent Qdrant data lives at `scratch/qdrant/`.** Derived data, gitignored, regeneratable from chunks + embeddings + metadata. Matches the existing convention for `scratch/chunks/` and `scratch/embeddings/`.
+
+3. **One-shot wipe-and-rebuild on every run.** If `scratch/qdrant/` exists when `index.py` runs, it is removed and the collection is built fresh. Simple, deterministic, idempotent.
+
+### Payload field list
+
+```
+chunk_id              # unique per chunk; matches the chunk JSONL id
+document_id           # links to corpus_metadata.toml entry
+title                 # human-readable document name (from metadata)
+issuer                # full organisation name (from metadata)
+issuer_type           # "regulator" | "reinsurer" (from metadata)
+jurisdiction          # ISO code or jurisdiction tag (from metadata)
+document_type         # supervisory_statement | guideline | sustainability_report
+effective_date        # ISO date (from metadata)
+version               # optional version string (from metadata)
+superseded_by         # optional document_id of successor (from metadata)
+source_url            # citation URL (from metadata)
+topics                # list of topic tags (from metadata)
+section_path          # list[str] from the chunker
+merged_section_paths  # list[list[str]] if this chunk absorbed others (D008)
+chunk_strategy        # hierarchy | paragraph_fallback | merged (from D008)
+token_count           # int (from the chunker)
+text                  # the chunk's full text content
+```
+
+`issuer_type` is now read from the Pydantic metadata model — fixes the prefix-lookup shortcut Probe 08 used and removes a duplication of knowledge.
+
+### Why text-in-payload, not lean-payload-plus-lookup?
+
+The lean alternative would strip `text` from the payload and have `retrieve.py` perform a second-pass lookup against `scratch/embeddings/*.jsonl` or `scratch/chunks/*.jsonl` to fetch text for the top-k hits.
+
+Trade-offs:
+
+- **Storage:** including text adds ~1 MB to the Qdrant collection. Negligible at corpus scale; we are not RAM-constrained.
+- **Retrieval simplicity:** self-contained retrieval is one query, no joins, no path coupling. Simpler code, fewer failure modes.
+- **Coupling:** lean payload would require `retrieve.py` to know about the path layout of `scratch/`, hard-coding what is currently a probe-and-pipeline implementation detail.
+
+For a 5-day artefact, the simplicity win is decisive. A real production system at 100× scale would revisit.
+
+### Why `scratch/qdrant/` and not `corpus/qdrant/`?
+
+The Qdrant index is fully derived: given the chunks (from the chunker), the dense embeddings (from `embed.py`), the BM25 vocab (from `bm25.py`), and the corpus metadata, the index is a deterministic function. Same logic as `scratch/embeddings/`.
+
+D011 separately specifies `corpus/bm25_vocab.json` as the BM25 vocab location. The inconsistency is real but deliberate: the BM25 vocab is small, text-format, and useful to commit as part of the corpus's interpretation. The Qdrant store is large, binary, and a pure runtime artefact. Splitting them is honest.
+
+### Why one-shot rebuild instead of incremental?
+
+For Day 2:
+
+- **Speed:** full rebuild over 461 chunks should be a few seconds (Probe 08 showed 0.42s for 10-point upsert with embedding). At full scale this is ~10-20s. Cheaper to rebuild than to maintain incremental-correctness invariants.
+- **Determinism:** every run produces an identical collection state. No "what's in there now?" mental load when iterating on schema or BM25 parameters.
+- **Idempotence:** re-running `python -m underwriting_copilot.index` is always safe. No `--force` flag needed.
+
+Day 4+ if the corpus grows (synthetic documents per D003) and rebuild becomes slow, incremental upsert becomes attractive. Until then, the simplicity of "delete and rebuild" wins.
+
+### Trade-offs and notes
+
+- **Payload size:** all 17 fields per point × 461 points. Worst case (Munich Re full chunks at 1500 tokens, plus metadata) ≈ 8 KB per point ≈ 4 MB collection-wide. Still negligible.
+- **No collection-time payload indexes** in this version. Qdrant supports per-field payload indexes for fast filtering on `keyword` / `integer` / `datetime` fields; we'll add these only if retrieval latency reveals filtering bottlenecks. Premature optimisation otherwise.
+- **`scratch/qdrant/` survives across runs by design.** Existence is checked at start of `index.py`; if present, removed before rebuild. The directory itself is gitignored.
+
+### When to revisit
+
+- If retrieval latency on filtered queries (`issuer_type=regulator`, `superseded_by IS NULL`) exceeds a useful threshold (say >50ms p95), add Qdrant payload indexes on the filtered fields.
+- If the corpus grows past ~10× current size (4-5k chunks), revisit the wipe-and-rebuild approach in favour of incremental upserts.
+- If retrieve.py's second-pass lookup pattern (text from somewhere else) becomes useful for a reranker or a streaming demo, revisit lean payload.
