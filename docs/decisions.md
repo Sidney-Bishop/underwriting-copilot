@@ -811,3 +811,81 @@ The symptom is identical under both. We did not investigate further given the pr
 **Cleanup recorded:** broken model directories removed from `~/.lmstudio/models/`. oMLX served roster down to 12 models (was 14 transiently).
 
 **Cross-project note.** `tst_llm_journal_snippet.md` (the staging artifact for the next `tst_llm` session) updated to record that the size axis is confirmed untestable on the current oMLX 0.4.1 + mlx_vlm stack. Real infrastructure intelligence for that project's roster planning.
+
+
+---
+
+## Q10 — STATUS AMENDED 2026-06-18 (now EXPLORATORY)
+
+**Original status:** OPEN, Phase 2 gated on D014 results.
+
+**Update:** Per D014's resolution criteria, "if prompt v2 closes the Qwen-Gemma gap, Q10 becomes curiosity-driven." It has. The Day 3 sweep showed prompt v2 closes 89% of the v1 gap (Qwen citation_recall 0.481 → 0.750, Gemma unchanged at 0.782), with within-document parity at 0.929/0.929 across 21 questions and single-chunk parity at 1.000/1.000 across 15.
+
+**New status: EXPLORATORY.** Q10's Phase 2 work (wrap AnswerGenerator as a `dspy.Module`, run GEPA against Qwen with the eval scorer as the metric) is no longer load-bearing for the Day 5 artefact's main story — the hand-designed prompt v2 already achieved what GEPA was held in reserve to attempt.
+
+**The narrative case for running GEPA anyway** remains: a "systematic optimization beats hand-tuning" demonstration would be a strong Day 5 talking point if GEPA pushes Qwen above Gemma on the within-document tasks (currently tied at 100% on single-chunk; closing the gap on multi-chunk-within-doc would be the target). Worth approximately half a day of work if Day 4 has slack after Q11 and Q12 are addressed. Not a project blocker.
+
+**Sub-questions Q10.1, Q10.2, Q10.3 remain open** if Phase 2 is pursued.
+
+---
+
+## Q11 — OPEN: production model choice
+
+**Date:** 2026-06-18
+**Status:** OPEN
+
+The Day 3 sweep results support an open question rather than a settled answer. With prompt v2 applied:
+
+| Workload | Gemma 4 31B IT × v2 | Qwen3.6 35B-A3B × v2 |
+|---|---|---|
+| Single-doc retrievable (n=15) | recall 1.000 | recall 1.000 |
+| Within-doc retrievable (n=21) | recall 0.929 | recall 0.929 |
+| Cross-document synthesis (n=2) | recall 0.417 | recall 0.000 |
+| Refusal correctness (n=14) | 14/14 | 14/14 |
+| Mean latency, answerable | 20.7s | 3.4s |
+| Mean latency, refusal | 7.9s | 1.3s |
+| Hallucination count, full sweep | 0 | 3 |
+
+The data shows: **on the bulk of the eval workload these two models produce equivalent quality, with Qwen 6.1× faster.** The Gemma advantage on cross-document synthesis (q025 thermal-coal Munich-vs-Swiss; q026 EIOPA-vs-PRA regulatory common themes) is real on the two questions tested but N=2 doesn't establish a robust pattern.
+
+**The trade-off is a product decision, not a technical one.** Considerations:
+- Anticipated query mix at production: what fraction of real underwriting queries will require cross-document synthesis?
+- Latency budget: is 6× faster meaningful for the intended use case (research/analysis workflows vs real-time interaction)?
+- Cross-document capability robustness: is the 0.417 vs 0.000 on N=2 enough evidence to weight against latency?
+- Cost / infrastructure: both run on the same MacBook M5 Max stack, so no infrastructure cost differential.
+
+**Resolution path:** Jason decides based on product context. Once decided, lodge as D015 with the rationale recorded. The benchmark's cross-document subset is too small to drive the call by itself; the call should be made on anticipated usage patterns plus the equivalence on within-document workloads.
+
+**Pending decision data:** if cross-document synthesis is anticipated to be common enough to matter, an extended benchmark with say 6-8 cross-document questions could give a more robust read on whether the Gemma advantage holds. That's deferable to post-interview if Q11 is settled on latency grounds for the artefact.
+
+---
+
+## Q12 — OPEN: retrieval miss pattern
+
+**Date:** 2026-06-18
+**Status:** OPEN
+**Phase:** Day 4
+
+The Day 3 sweep showed 3 of 26 answerable questions (11.5%) had `retrieval_recall = 0` across all 4 cells — the gold chunk was not in the BGE-M3 + BM25 RRF top-5 for any model × prompt combination. This is model-independent: it's an upstream retrieval-quality finding.
+
+**The three retrieval-miss questions:**
+
+- **q001** "Which entities does PRA Supervisory Statement 5/25 apply to?" — gold `pra_ss5-25_climate__0005__scope`. Retrieval surfaced `__0002__contents`, `__0003__1-introduction`, `__0018__corporate-governance-structures`, `__0014__evolution-of-climate-related-risk-measur`, `__0010__proportionate-application-of-expectation`. The dedicated scope chunk was outside top-5.
+
+- **q004** "What three characteristics make climate-related risks distinctive and require a strategic management approach?" — gold `pra_ss5-25_climate__0007__characteristics-of-climate-related-risks`. Same shape: query is conceptually narrow but the gold chunk wasn't surfaced.
+
+- **q013** "What is Munich Re's underwriting policy on new thermal coal mines and power plants?" — gold `munich_re_sustainability_2023__0053__thermal-coal`. This is the diagnostically interesting one: the chunk is literally titled `thermal-coal` and the query contains the verbatim string "thermal coal." BM25 sparse should have surfaced this near the top. The fact that it didn't suggests RRF is downweighting strong BM25 matches when the dense channel disagrees.
+
+**Investigation paths for Day 4 (no commitments made; ordered by cheapness):**
+
+1. **Increase top_k from 5 to 8 or 10**, re-run the sweep on the affected questions only (via `--question-ids q001,q004,q013`). If gold chunks appear at rank 6-8, problem is cheap to solve at the retrieval call site — top_k=5 was tuned by gut feel during Day 2 not from data.
+
+2. **Inspect the dense and sparse channel scores separately** for the three queries. The `Retriever` doesn't currently expose per-channel scores in its public output but adding a debug mode is small. If BM25 ranks the gold chunk high and dense ranks it low, RRF fusion is the suspect. If both channels rank it low, it's a deeper chunking or representation issue.
+
+3. **Revisit Q7** (FlagEmbedding for full BGE-M3 multi-functionality). Q12's investigation may strengthen the case for Q7 — using BGE-M3's lexical + sparse + multi-vector channels rather than the current dense-only pooling could reduce miss rate. Or could complicate things further without payoff. Empirical question.
+
+4. **Re-examine the chunking**. The retrieval-miss chunks are all section-headed (`__0005__scope`, `__0007__characteristics`, `__0053__thermal-coal`). If the chunker is including or excluding section headers in ways that affect embedding similarity, that's a chunking issue not a retrieval issue.
+
+**Falsification criterion (proposed):** if increasing top_k from 5 to 8 surfaces all three gold chunks, Q12's resolution is "raise top_k=8 as the production default; no deeper retrieval changes needed." If raising top_k doesn't fix it, deeper investigation (paths 2-4) becomes necessary.
+
+**Cross-link to Q11:** Q12's resolution may not change the production model choice — both models are equally affected by retrieval misses — but it does change the headline citation_recall numbers reported in the Day 5 artefact. If retrieval improvements lift baseline recall by ~10pp, that's a more compelling overall result than the current numbers.

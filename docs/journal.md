@@ -606,3 +606,135 @@ After landing D014 + Q10 at `4079dc9`, the next concrete step was Q9: pull a 12B
 **Process correction worth noting.** My initial framing of the 12B blocker was "setback to document quietly and move on." Sibling-Claude review reframed it as "this is the kind of finding the interview audience cares about more than the model comparison itself — a Lead Generative AI role will value 'diagnosed an infrastructure gap, characterised it precisely, re-scoped the eval around it' at least as much as 'picked the right model'." Adjusting the Day 3 writeup framing accordingly. Worth recording the correction because the failure mode (quiet setback vs featured finding) is a recurring one I should watch for.
 
 **Cross-project artifact updated.** `tst_llm_journal_snippet.md` v2 in `~/Downloads/` (replaces the earlier version) — adds one sentence noting the size axis is confirmed untestable on the current oMLX 0.4.1 + mlx_vlm stack. Real infrastructure intelligence for `tst_llm`'s roster planning when it's next touched.
+
+
+---
+
+## Day 3 (full) — 2026-06-18 late afternoon
+
+End-of-Day-3. The D014 sweep ran (160 cells, 23.7 minutes wall-clock, zero errors). This entry supersedes the preliminary follow-ups in framing only — those remain in the journal as the day's narrative, including the Q9 deferral and the design conversation that produced D014/Q10.
+
+## The headline finding
+
+**Interpretation B is supported. The Day 2 family-axis finding retracts.**
+
+Mean citation_recall across the 26 answerable benchmark questions:
+
+| Cell | citation_recall | refusal_correct | hallucinations | latency (mean s, answerable) |
+|---|---|---|---|---|
+| Gemma 4 31B IT × v1 | **0.782** | 14 / 14 | 0 | 17.2 |
+| Gemma 4 31B IT × v2 | **0.782** | 14 / 14 | 0 | 20.7 |
+| Qwen3.6 35B A3B × v1 | **0.481** | 14 / 14 | 15 | 4.0 |
+| Qwen3.6 35B A3B × v2 | **0.750** | 14 / 14 | 3 | 3.4 |
+
+The Qwen v1 → v2 jump is **+26.9 percentage points** from a hand-designed prompt fix alone, same model, same data, same temperature. The 30.1pp Gemma-vs-Qwen gap under v1 collapses to 3.2pp under v2. That sits comfortably inside D014's 10pp falsification threshold.
+
+Qwen hallucinations dropped 80% (15 → 3). The systematic `[chunk_id_N]` placeholder collapse failure mode from Day 2 is gone — the 3 remaining hallucinations are sparse genuine confabulations on individual questions, not the family-property failure the Day 2 framing implied.
+
+## The within-document vs cross-document split is where it gets interesting
+
+The 3.2pp residual gap in v2 (Gemma 0.782 vs Qwen 0.750) is **not evenly distributed**. Breaking the 26 answerable questions by question type:
+
+| Subset | n | Gemma v2 | Qwen v2 | gap |
+|---|---|---|---|---|
+| All answerable | 26 | 0.782 | 0.750 | 3.2pp |
+| Excluding 3 retrieval misses | 23 | 0.884 | 0.848 | 3.6pp |
+| Within-document only (no cross-doc) | 21 | 0.929 | 0.929 | **0.0pp** |
+| Single-chunk retrievable only | 15 | 1.000 | 1.000 | **0.0pp** |
+| Cross-document only | 2 | 0.417 | 0.000 | 41.7pp |
+
+On the 21 within-document retrievable questions Gemma and Qwen are **identical**. On the 15 single-chunk retrievable subset both hit perfect recall. The entire 3.2pp full-set gap is concentrated in the 2 cross-document synthesis questions (q025: Munich Re vs Swiss Re thermal coal comparison; q026: EIOPA vs PRA regulatory common themes), where Gemma found at least one anchor chunk on both and Qwen found neither.
+
+**N=2 is too small to make a confident claim about cross-document synthesis being a real model differentiator.** It's suggestive — Qwen's mixture-of-experts thinking-style architecture (A3B activates only 3B params per token) plausibly has weaker capacity for the kind of multi-source planning that cross-document synthesis requires, even with thinking disabled. But two questions doesn't prove that. The honest framing for the production decision is "single-document and within-document workloads: equivalent quality; cross-document: data insufficient to call."
+
+## What Day 2 N=3 got wrong, and why
+
+The Day 2 demo on 3 queries produced Gemma 18 valid citations / Qwen 0 valid citations on one query, Gemma 12/0 on another, both refused correctly on the third. The interpretation I lodged at the time was that this signalled a "family-axis" property: instruction-tuned `it`-suffix Gemma had more rigid-format discipline than thinking-style A3B Qwen, even with thinking disabled. The preliminary journal entry qualified this as "preliminary on N=3" with three named confounds, which was the right level of hedging — but I was still treating the finding as directionally correct.
+
+It wasn't. The N=3 sample was insufficient to distinguish three confounded variables:
+
+1. **Model property** (what I conjectured): Qwen's post-training produces weaker format discipline.
+2. **Prompt-fit artifact** (what the data actually shows): the v1 prompt used the literal string `[chunk_id]` as both the placeholder name in the instructions AND the format the model should emit. Gemma resolved this ambiguity by emitting the actual chunk_id; Qwen resolved it by treating `chunk_id` as the literal token to substitute with indices (`[chunk_id_1]`, `[chunk_id_5]`). Both interpretations are locally consistent with the prompt; the prompt was ambiguous, not the models broken-in-different-ways.
+3. **Sampling noise**: with N=3 and a binary success metric, any one question's failure can dominate the appearance of the result.
+
+The 2 × 2 sweep was the right design to separate these. Prompt v2 — removing the echo trap, using `<ID>` metasyntax, including one concrete worked example — closes 89% of the gap with no change to Gemma's behaviour. That's the signature of a prompt-fit artifact, not a model property.
+
+There's a meta-lesson worth being explicit about: **N=3 with a confounded variable can produce a clean-looking finding that's wrong in interpretation while right in surface measurement.** The Day 2 measurements were accurate (Gemma did emit cleaner citations than Qwen on those 3 queries with v1); the *interpretation* — attributing this to a property of the models rather than the prompt — was an inferential overreach. The discipline of "delay characterisation by one more datapoint" from the `tst_llm` work applies here in a sharper form: delay *interpretation* by enough data to distinguish the candidate causal variables, not just by enough data to be confident in the surface measurement.
+
+## What landed cleanly across both models
+
+**Refusal correctness was 100% across all four cells.** All 14 should-refuse questions across both models and both prompts produced the exact refusal phrase, including:
+- 6 out-of-corpus topic refusals (Bermuda, NAIC, China, Lloyd's crypto, etc.)
+- 4 adjacent-but-unanswered refusals (the hardest category — corpus discusses topic qualitatively but lacks the specific numeric/detail asked for)
+- 4 false-premise refusals (tornado-specific PRA SS, Munich Re withdrawal from Germany, etc.)
+
+That's 56 / 56 correct refusals. **Both models, both prompts, never confabulated on the deliberate trap questions** — including the adjacent category specifically designed to test whether models invent numbers when the corpus is qualitative-only. This is the production-relevant failure mode for a regulatory copilot, and the data says it's not a present concern with either of these models on this prompt.
+
+This is a substantively important secondary finding. A reinsurance underwriting copilot that hallucinates on out-of-corpus questions would be actively dangerous; both models on both prompts refused cleanly. The Day 2 preliminary entry flagged adjacent-refusals as the harder test; both models passed every one of them.
+
+## Retrieval is now the limiting factor
+
+3 of the 26 answerable questions had `retrieval_recall = 0` across all 4 cells — the gold chunk was not in the BGE-M3 + BM25 RRF top-5 for any combination of model and prompt:
+
+- **q001** "Which entities does PRA Supervisory Statement 5/25 apply to?" — gold `pra_ss5-25_climate__0005__scope`. Retrieval surfaced contents, intro, corporate governance, risk measurement, proportionate application; the dedicated scope chunk was outside top-5.
+- **q004** "What three characteristics make climate-related risks distinctive?" — gold `pra_ss5-25_climate__0007__characteristics-of-climate-related-risks`. Same family of miss.
+- **q013** "What is Munich Re's underwriting policy on new thermal coal mines?" — gold `munich_re_sustainability_2023__0053__thermal-coal`. This is the surprising one: the chunk is literally titled `thermal-coal` and the query contains "thermal coal" verbatim. BM25 sparse should have surfaced this near-top.
+
+11.5% retrieval miss rate is high enough that it deserves investigation rather than dismissal as noise. The q013 case in particular is diagnostically interesting — it suggests RRF is downweighting strong BM25 matches when the dense channel disagrees, which would be a tuning bug rather than a retrieval-quality limitation. Worth a targeted Day 4 investigation; lodged as Q12.
+
+The eval design's separation of `retrieval_recall` from `citation_recall` made this finding visible cleanly. Without that separation, the 3 retrieval-miss questions would have shown up as model failures (citation_recall=0, citation_precision=0 across all four cells, model-shaped). The retrieval_recall channel shows they're upstream of the answer model entirely.
+
+## What this means for the production model choice
+
+The data supports an open question rather than a settled answer, lodged as Q11:
+
+- **On single-document retrievable workloads**: both models at 100% recall. No quality difference to discriminate on.
+- **On within-document workloads (single + multi-chunk same doc)**: 0.929 recall for both. No quality difference.
+- **On cross-document synthesis (N=2)**: Gemma 0.417, Qwen 0.000. Suggestive but not robust at this sample size.
+- **On refusal**: both 100% across all categories.
+- **On latency**: Qwen is 6.1× faster (3.4s vs 20.7s mean on answerable, 1.3s vs 7.9s on refusal). This is a real production cost difference, not noise.
+
+The trade-off is now: Qwen × v2's 6× latency advantage versus Gemma × v2's potential edge on cross-document synthesis. For a reinsurance underwriting copilot used in research/analysis workflows (not real-time customer interaction), latency may matter less than the cross-document capability — but with N=2 the cross-document advantage isn't reliably established. Reasonable people could pick either; the decision belongs to Jason and is best made with product context (anticipated query mix, expected cross-document frequency, infrastructure cost sensitivity).
+
+## What this means for Q10 (DSPy/GEPA)
+
+Per D014's resolution criteria: *"If prompt v2 closes the Qwen-Gemma gap, Q10 becomes curiosity-driven."* It has, comfortably. Q10's status is amended to **exploratory** rather than load-bearing. Phase 2 (Day 4-5) is now optional for the artefact's main story — the hand-designed prompt fix achieved what GEPA was being held in reserve to attempt.
+
+There's still a Day 5 narrative case for running GEPA: demonstrating that *systematic* prompt optimization on Qwen could push it above Gemma on the within-document tasks (currently tied at 100% on single-chunk; closing the gap on multi-chunk-within-doc would be the target). That would be a "small model + optimized prompt > larger model with default prompt" story consistent with the Shopify-style narrative DSPy markets. Worth maybe half a day of work if Day 4 has slack; not load-bearing.
+
+## What this means for the brief's "7-14B sweet spot" hypothesis
+
+Q9 was closed-deferred because Gemma 4 12B IT couldn't be served on the current oMLX/mlx_vlm stack. The Day 3 data is consistent with the brief's underlying intuition but doesn't directly test it. With prompt v2 the 35B A3B Qwen reaches parity with the 31B Gemma on the bulk of the workload. If a 7-14B IT model could be served, the relevant hypothesis to test would be whether it can also reach parity (at even greater latency advantage), or whether 30B+ is the floor for reliable rigid-format performance on this corpus. The data we have doesn't settle this; the infrastructure gap remains as documented.
+
+## Cross-project read-across to tst_llm
+
+The retraction matters for the cross-project snippet still staged in `~/Downloads/`. The Day 2 framing ("family axis appears more decisive than size") was preliminary on N=3 and is now empirically weakened by the N=26 follow-up. Delivering a v3 snippet to replace the v2 staging artifact; v2 is superseded but not committed to either project, so the correction lands cleanly with no rollback.
+
+The Day 3 finding still produces a useful read-across for `tst_llm`, but a different one than the Day 2 framing implied. The new finding is methodological: **a prompt that's ambiguous in a specific structural way (using a literal token as both placeholder name and emit-format) can produce model-specific failure modes that look like model properties but aren't**. If `tst_llm` ever extends its prompt-design work, the echo-trap pattern is worth checking explicitly.
+
+## Meta-lessons recorded for the meta-lessons file
+
+1. **Designed falsification works.** D014's 2 × 2 was set up explicitly to falsify the Day 2 finding, with a stated falsification criterion. The data falsified it cleanly. Setting up tests where you might be wrong is more useful than setting up tests where you might be right.
+
+2. **Retract findings publicly when the data warrants it.** The Day 2 family-axis interpretation was wrong; the v1→v2 Qwen jump weakens it sharply. The right move is documented retraction (this entry + Q10 amendment + tst_llm v3 snippet), not quiet de-emphasis.
+
+3. **Orthogonal axes catch failure modes that single-axis metrics hide.** Tracking `retrieval_recall` separately from `citation_recall` localized the 3 retrieval-miss questions as upstream-of-model failures. Tracking `hallucinated_citations_count` separately from `citation_precision` kept Qwen v1's placeholder-collapse visible as confabulation rather than misclassified as "wrong-chunk citations". The instinct to collapse to a single score for simplicity is one to fight against during eval design.
+
+4. **The interview audience cares more about diagnostic process than peak measurements.** The Q9 deferral on the 12B infrastructure gap, the q013 retrieval miss diagnosis, this entire retraction — these are the kind of artefacts that demonstrate engineering discipline, not failures to hide. The Day 5 final write-up should feature the retraction prominently, not bury it.
+
+## State of play going into Day 4
+
+- D014 closed (eval harness operational, 160-cell sweep complete, 80 unit tests pinning the harness's correctness).
+- Family-axis finding retracted; production model choice opens as Q11.
+- Retrieval miss pattern opens as Q12 — Day 4 investigation target.
+- Q10 amended to exploratory; Phase 2 work optional.
+- Q9 stays closed-deferred (Gemma 4 12B blocked at infrastructure layer).
+- Q7 still open (FlagEmbedding multi-functionality revisit; Q12's investigation may make Q7 more interesting).
+- 0 errored cells in 160 — oMLX stable under sustained load on the two working models, useful infrastructure datapoint.
+
+Day 4 concrete moves:
+- Q12 investigation (top_k experiments, RRF weight tuning, optionally Q7 revisit).
+- Q11 decision (production model choice).
+- Optional Q10 Phase 2 (GEPA on Qwen) if Day 4 has slack.
+- Governance.md, security.md, evaluation.md per the original Day 4 plan.
+- report.py to produce the formal per-cell aggregation from `eval/results/2026-06-18T12-16-35Z/raw.jsonl` (currently the numbers are reproducible from the stderr log but a deterministic aggregator is the right artefact for the Day 5 write-up).
