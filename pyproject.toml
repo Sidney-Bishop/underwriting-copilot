@@ -5,6 +5,7 @@ description = "Local-first RAG copilot for reinsurance underwriting — hybrid r
 requires-python = ">=3.14"
 dependencies = [
     "docling>=2.103.0",
+    "mlx-embeddings>=0.1.0",
     "pydantic>=2.13.4",
 ]
 
