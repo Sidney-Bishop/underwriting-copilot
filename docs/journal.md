@@ -240,3 +240,30 @@ a new entry correcting it. The wrongness is part of the record.
   - **Why this matters in process terms:** mean-pooled would have shipped silently as the default if the probe hadn't included the comparison from the start. Both the mlx-embeddings library default *and* the mlx-community/bge-m3-mlx-fp16 model card example use mean pooling. Two independent upstream signals saying "use mean," one paper saying "use CLS." The probe surfaced the disagreement before it could harden into a silently sub-optimal implementation. **Building the disagreement check into the first probe — not after the first failed eval — is the lesson.**
 
 - Lodged **D010** to pin CLS+L2 pooling as the dense embedding strategy.
+
+
+- `uv add qdrant-client` — 7 transitive packages, all expected (gRPC stack + `portalocker` for local-mode persistence). Pleasant contrast with the `mlx-embeddings` 28-package sprawl earlier; tightly-scoped upstream packaging makes a real difference to dependency hygiene.
+
+- Built **Probe 08** around four queries against an in-memory Qdrant collection: dense-only self-retrieval (sanity), sparse-only (channel populated?), hybrid RRF (fusion mechanics), and dense+filter (`issuer_type=regulator` excludes reinsurer chunks). Extracted `cls_l2_pool()` as a named helper inside the probe — the canonical D010-pinned pooling, ready to lift to `src/underwriting_copilot/embed.py` when production code arrives.
+
+- First-run results were mostly green: schema clean (named `dense` 1024-dim cosine + named `sparse`), dense self-retrieval returned chunk 0 at score 1.0000 with chunk 6 (same EIOPA doc, different section) at 0.8232, and the regulator filter held without leaks. **But sparse-only returned zero results.**
+
+- **The probe almost lied to us.** A no-error completion where one of the four queries returned an empty list could easily have been read as "fine, move on, the real BM25 vectors will be denser anyway." That would have meant writing `retrieve.py` against an untested fusion path — the kind of silent gap that surfaces during eval, not during the probe that was supposed to catch it.
+
+- Diagnosed: placeholder sparse vectors were configured at 8 non-zeros from a 5000-element vocab. Birthday-problem maths: probability of any index overlap between two such vectors is ~`1 - (4992/5000)^8 ≈ 1.3%` per pair. Across 10 indexed points and one query, expected overlaps ≈ 0. Confirmed with a one-liner:
+
+  ```
+  rng = random.Random(42)
+  samples = [set(rng.sample(range(5000), 8)) for _ in range(11)]
+  overlaps = sum(1 for s in samples[:-1] if s & samples[-1])  # → 0
+  ```
+
+  Not a Qdrant bug, not a schema problem — a probe-parameter mistake. The hybrid query *technically* worked (Qdrant didn't crash, RRF handled the empty-sparse case gracefully by falling through to dense ranks only) but the fusion-of-two-non-empty-lists code path was never exercised.
+
+- **Lesson** worth pinning: *an unexpected zero result is a finding, not a non-finding*. A probe that produces "no results" without a structural explanation is failing silently in a way that's particularly hard to catch — it looks like success.
+
+- Recovery: bumped `SPARSE_NNZ` from 8 to 100 (~87% per-pair overlap probability), re-ran. Sparse-only returned 5 ranked hits, hybrid RRF produced `[9, 0, 6, 4, 5]` — visibly different from dense-only `[0, 6, 3, 2, 4]` and from sparse-only `[9, 4, 5, 7, 6]`. id 9 (sparse-top, not-in-dense-top-5) and id 0 (dense-top, not-in-sparse-top-5) both surface in the hybrid top 2. RRF scoring arithmetic confirmed empirically: classic `1/(k+rank)` with `k=60` default — top hits at 0.6250, 0.6111, etc.
+
+- Performance: 0.79s warm model load (vs. 27.8s first-time in Probe 07), 0.42s for 10-chunk embed-and-upsert combined. Per-chunk cost ~42ms. Full-corpus projection: ~20s for embed-and-index together. Cheap enough to re-index iteratively while we tune.
+
+- One operational shortcut introduced in the probe that production code will need to fix: I derived `issuer_type` from a `document_id` prefix lookup table inside the probe rather than reading it from `corpus_metadata.toml` via the Pydantic model. That works because of the corpus naming convention, but it duplicates knowledge the metadata schema already encodes. `embed.py` / `index.py` should read `issuer_type` from the metadata model directly. Logging this as a known shortcut to fix, not a bug.

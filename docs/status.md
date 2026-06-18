@@ -24,37 +24,47 @@ that content to `journal.md` and let this snap back to a snapshot.
   inline string fixtures, all green.
 - Full ingest pipeline verified end-to-end: 461 chunks across 6 documents,
   all health checks pass. Chunks materialised in `scratch/chunks/*.jsonl`.
-- `mlx-embeddings` dependency added (pulls in the broader MLX ecosystem
-  via upstream's loose scoping; accepted).
-- Probe 07: BGE-M3 sanity via mlx-embeddings. Switched from `BAAI/bge-m3`
-  to `mlx-community/bge-m3-mlx-fp16` after the upstream repo's safetensors
-  weren't fetched by mlx-embeddings' downloader. Verified: load 27.8s,
-  warm 0.067s/chunk (~31s projected full corpus), dim 1024 matches spec,
-  cross-document geometry sensible. CLS-pooled + L2-normalised pinned via
-  D010 after CLS-vs-text_embeds cosine sim measured 0.687 (well below the
-  pooling-low-stakes threshold of 0.80).
+- `mlx-embeddings` and `qdrant-client` dependencies added.
+- Probe 07: BGE-M3 dense channel verified via `mlx-community/bge-m3-mlx-fp16`.
+  Load 27.8s first-time / 0.79s warm, 0.067s/chunk warm (~31s projected
+  full corpus), dim 1024 matches spec, cross-document geometry sensible.
+  CLS+L2 pooling pinned via D010 after CLS-vs-text_embeds cosine sim
+  measured 0.687 (below the 0.80 low-stakes threshold).
+- Probe 08: Qdrant local-mode (in-memory) retrieval substrate verified.
+  Named dense + sparse collection schema, four queries:
+  - Dense self-retrieval (chunk 0 returns itself at 1.0000, intra-doc
+    next-best at 0.8232).
+  - Sparse-only (populated with denser placeholders).
+  - Hybrid RRF (genuinely fuses two non-empty ranked lists; ids differ
+    from either channel alone).
+  - Payload filter (`issuer_type=regulator` excludes reinsurer chunks).
+  Performance: 0.42s for 10-chunk embed+upsert combined.
 
 **In progress:**
-- Day 2 embedding pipeline. D009 + D010 lodged. Probe 07 done. Next probe
-  is Qdrant local-mode sanity (collection with dense + sparse vector
-  fields, payload metadata, insert + filter-and-query check).
+- Day 2 production code. Probes 07 and 08 cleared the retrieval substrate;
+  next is lifting helpers into real modules.
 
 **Blocked:**
 - None.
 
 **Next (Day 2):**
-- Probe 08: Qdrant local-mode collection schema (1024-dim dense + sparse
-  fields), insert + filter-and-query sanity on a handful of chunks.
-- BM25 channel: tokenisation, vocabulary build over the corpus, sparse
-  vector generation per chunk.
-- Production embed module (`src/underwriting_copilot/embed.py`): batch
-  BGE-M3 dense over all 461 chunks (~31s projected), CLS+L2 pooling
-  per D010.
-- Production index module (`src/underwriting_copilot/index.py`): create
-  Qdrant collection, upsert chunks with both vector channels and payload.
+- Production embed module (`src/underwriting_copilot/embed.py`): lift
+  `cls_l2_pool` helper from Probe 08, batch BGE-M3 dense over all 461
+  chunks (~31s projected per Probe 07), persist alongside chunk metadata.
+  Unit tests pin pooling shape (vector dim, unit norm) so a future
+  refactor can't silently revert to mean pooling.
+- BM25 sparse channel: tokenisation, vocabulary build over the corpus,
+  sparse-vector generation per chunk. Open sub-questions: tokeniser
+  choice (BGE-M3's XLM-RoBERTa tokenizer vs. a simpler word-level
+  approach), and whether vocabulary scope is corpus-wide or per-document.
+- Production index module (`src/underwriting_copilot/index.py`):
+  persistent local Qdrant collection (file-based, not in-memory),
+  upsert all 461 chunks with both vector channels and the full
+  payload schema. `issuer_type` read from the Pydantic metadata model
+  rather than the prefix-lookup shortcut Probe 08 used.
 - Retrieval module (`src/underwriting_copilot/retrieve.py`): hybrid
   query, RRF fusion, payload filtering by `document_id`, `issuer_type`,
-  etc.
+  `superseded_by IS NULL` (exclude superseded guidance), etc.
 - First end-to-end demo: query → retrieve → cited answer with refusal
   behaviour when evidence is thin.
 
