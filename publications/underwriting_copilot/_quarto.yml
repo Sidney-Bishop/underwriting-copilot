@@ -18,6 +18,7 @@ website:
       - sections/08_limitations.qmd
       - sections/09_conclusions.qmd
       - sections/metrics_explainer.qmd
+      - sections/appendix_concepts.qmd
 
 format:
   html:

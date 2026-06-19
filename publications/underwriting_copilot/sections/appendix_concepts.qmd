@@ -1,0 +1,405 @@
+---
+title: "Concepts Explained"
+toc: true
+toc-depth: 2
+---
+
+::: {.callout-note icon=false}
+## How to use this page
+
+This appendix is for readers who would like a plain-language
+walkthrough of the technical concepts the rest of the report
+relies on. Each entry is short — roughly two or three minutes of
+reading — and is written for someone who has not seen the concept
+before.
+
+The main text of the report links here. If you hit a term in the
+Executive Summary or Introduction that doesn't quite resolve,
+click through; the entry will explain it, and you can return to
+where you were.
+
+This page complements the **Glossary & Metrics** reference (which
+is shorter and organised for quick lookup). Use the glossary when
+you want a one-line definition; use this page when you want to
+understand the concept.
+:::
+
+---
+
+## 1. Retrieval-Augmented Generation (RAG) {#concept-rag}
+
+**Retrieval-Augmented Generation**, usually written **RAG**, is
+the pattern of giving a language model the relevant documents
+*alongside* the user's question, rather than expecting the model
+to answer from its training data.
+
+A language model on its own has read a great deal of text during
+training, but its knowledge is frozen at a point in time and is
+not specific to any one organisation. Ask such a model "what is
+Munich Re's 2024 thermal coal policy?" and the answer will
+typically be plausible-sounding, possibly out of date, and not
+verifiable against any specific source.
+
+The RAG pattern fixes this with a two-step flow. First, the
+system *retrieves* relevant passages from a document collection
+that the model didn't necessarily see during training — in
+Cedant's case, the indexed corpus of regulatory and corporate
+documents. Second, the system *generates* an answer using those
+retrieved passages as the source material. The model is given
+both the question and the passages; the model writes its answer
+based on what the passages actually say.
+
+A useful analogy: a research assistant who has memorised a great
+deal of general knowledge can write a passable summary from
+memory, but if you want them to cite a specific clause of a
+specific contract, you hand them the contract first. RAG is the
+software version of handing the model the contract first.
+
+The pattern matters in reinsurance because the documents that
+matter most — internal policies, recent regulatory updates,
+broker submissions — are precisely the documents a general-purpose
+model has not been trained on.
+
+---
+
+## 2. Hybrid Retrieval (Semantic + Keyword) {#concept-hybrid-retrieval}
+
+When Cedant goes looking for the relevant passages in the
+document collection, it uses **two** search methods at the same
+time and combines the results.
+
+**Keyword search** (the technical name is BM25) looks for
+documents that contain the same words as the query. It is
+excellent at finding exact matches for named entities —
+regulation identifiers ("SS5/25"), company names ("Munich Re"),
+specific defined terms ("ORSA"). It is less good when the user
+phrases the question one way and the document phrases the answer
+another way ("greenhouse gas exposure" vs "GHG emissions
+profile").
+
+**Semantic search** (the technical name is dense embedding
+retrieval) looks for documents that *mean* the same thing as the
+query, even when they use different words. It is excellent at
+catching paraphrases and conceptual matches. It is less good at
+exact named-entity recall — if you ask for "paragraph 4.124"
+specifically, semantic search may surface paragraphs that *talk
+about* the same topic but are not the one you wanted.
+
+The two methods catch what the other misses. Using both — and
+combining their results with a small mathematical trick called
+Reciprocal Rank Fusion — produces noticeably better retrieval
+than either alone. This is what *hybrid retrieval* means.
+
+For reinsurance documents specifically, the case for hybrid
+retrieval is strong: regulatory text is dense with named entities
+(supervisory statements, defined terms, paragraph numbers), while
+the surrounding descriptive prose is exactly the territory where
+semantic search dominates.
+
+---
+
+## 3. The Citation Contract {#concept-citation-contract}
+
+Cedant makes an explicit commitment to a property called the
+**citation contract**: every factual claim in an answer must be
+paired with a citation to a specific paragraph in a specific
+document, and the citation must resolve to a real source the
+system actually used.
+
+The contract is enforced *structurally*, which is the load-bearing
+distinction. A language model can be *told* in its instructions
+to cite its sources — and might or might not actually do so.
+"Structurally enforced" means the system does not rely on the
+model's good behaviour. It checks.
+
+Specifically: every citation the model emits is captured by a
+parser, and each captured citation is checked against the
+collection of paragraphs the system actually showed to the model.
+A citation that points to something the model never saw is flagged
+as a **hallucinated citation** and is surfaced explicitly in the
+user interface (as a red badge) rather than silently allowed
+through.
+
+The contract matters because, in this domain, an incorrect
+citation is worse than no citation at all. An underwriter relying
+on a fabricated citation in a committee paper has acquired an
+auditable error rather than a vague impression. A loose citation
+discipline — even one that *usually* gets it right — is not safe
+to deploy in a high-consequence workflow.
+
+The citation contract is what allows the system to be useful in
+that workflow at all.
+
+---
+
+## 4. The Refusal Contract {#concept-refusal-contract}
+
+The companion to the citation contract is the **refusal
+contract**: when the document collection does not contain enough
+information to answer the question, the system must refuse to
+answer, rather than guess.
+
+The refusal contract is implemented as an *exact phrase*. The
+system commits to emitting the words
+
+> *"I cannot answer this from the provided sources."*
+
+— and nothing else — when retrieval surfaces no relevant
+documents, or when the model determines the retrieved documents
+do not contain the answer. A separate detector in the code looks
+for this exact phrase and uses it as the signal that the system
+refused.
+
+The strictness of the exact-phrase rule is deliberate. A loose
+refusal detector — one that accepts "I don't quite know" or "I
+can't be sure" or "the documents don't seem to cover this" —
+introduces ambiguity into something that needs to be unambiguous.
+The system must either refuse, or answer with citations; there is
+no middle ground.
+
+This matters most in the hardest case: questions where the
+document collection *does* discuss the topic but does not contain
+the specific detail being asked for. A language model is most
+tempted to confabulate exactly here. The refusal contract is what
+keeps the system honest in those cases — and the evaluation
+demonstrates the contract holds (every refusal question in the
+benchmark, across every test cell, is refused correctly).
+
+---
+
+## 5. Hallucination {#concept-hallucination}
+
+In the context of language models, **hallucination** refers to
+content that the model generates which is not true, not
+supported, or not consistent with its source material — but is
+phrased confidently as if it were.
+
+The classic example is a model that, asked for the citation of a
+court case, produces a confidently-written reference to a case
+that does not exist. The language is fluent; the content is
+fabricated. Hallucinations are dangerous precisely because they
+do not signal their own untrustworthiness.
+
+In Cedant, hallucination most commonly refers to **hallucinated
+citations** — citations that look syntactically valid and point
+to plausible-looking chunk identifiers, but whose identifiers do
+not match any chunk the system actually retrieved. A hallucinated
+citation looks correct at a glance and only fails when you try to
+look up the source.
+
+Cedant's structural citation contract is designed specifically to
+catch this failure mode. Every citation is checked; every
+hallucinated citation is partitioned out and surfaced to the user
+(rather than passed through silently). The evaluation tracks the
+count of hallucinated citations per model — the
+production-default model produces zero across the full
+44-question answerable test set.
+
+Note that hallucination, in this sense, is a *technical* finding
+about citation validity. It does not measure whether the prose
+itself is semantically correct — a model could in principle write
+prose that misrepresents what its (validly-cited) source actually
+says. The report is careful about this distinction; semantic
+correctness is a separate problem, recorded as future work.
+
+---
+
+## 6. Local-First Execution {#concept-local-first}
+
+Cedant runs entirely on the operator's own machine — a single
+laptop. There are no API calls to remote services at any stage of
+the pipeline, including the evaluation. This property is called
+**local-first** execution.
+
+What this means in practice: the search index, the language model
+weights, and all inference happen on the user's hardware. Document
+content never leaves the machine. The system can run without an
+internet connection (after the model weights have been downloaded
+once).
+
+What it costs: the system is limited to language models that can
+run on local hardware, which means it cannot access the very
+largest cloud-hosted models. The production-default model
+(Gemma 4 31B IT) is substantial but not the largest available; a
+hosted alternative could in principle produce different results.
+The system is also currently tied to Apple Silicon hardware (the
+M-series Mac chips), since the model-serving stack is built on
+Apple's MLX framework.
+
+What it buys: data sovereignty, which is the central point. For
+many reinsurers, the documents that matter most — internal
+underwriting policies, broker submissions under non-disclosure
+agreements, internal pricing rationale — cannot legally or
+practically be sent to a third-party API. Local-first execution
+is not an architectural preference; it is the only way to make
+the system usable in that environment at all.
+
+A secondary benefit is auditability: the same query against the
+same documents produces the same answer, which matters for
+post-hoc verification of what the system told a particular
+underwriter on a particular date.
+
+---
+
+## 7. Chunks {#concept-chunks}
+
+When Cedant indexes a document, it does not store the document as
+a single object. It splits the document into smaller pieces
+called **chunks** — typically a few hundred to about fifteen
+hundred words each — and stores each chunk separately.
+
+There are two reasons for the split. First, language models can
+only process a limited amount of text at once (the *context
+window*); whole documents are often too large. Second, retrieval
+works better at the level of focused passages than at the level of
+whole documents — a question about thermal coal policy is best
+answered by surfacing the specific thermal-coal paragraph, not by
+returning the entire 80-page sustainability report.
+
+Every chunk has a unique identifier. For example:
+
+```
+pra_ss5-25_climate__0027__role-of-scenario-analysis
+```
+
+This combines the source document (`pra_ss5-25_climate`), a
+sequence number (`0027`), and a short slug describing the section
+(`role-of-scenario-analysis`). When the language model emits a
+citation, it cites the chunk identifier; the system then verifies
+that the identifier corresponds to a real chunk that was actually
+retrieved.
+
+The chunking algorithm in Cedant is a small piece of engineering
+in its own right (described in Section 3 and decision log entry
+D008). It respects document structure where possible — section
+headings, numbered paragraphs — rather than splitting at fixed
+character boundaries, because a citation should land on a
+semantically coherent passage rather than on an arbitrary slice.
+
+---
+
+## 8. Falsification Criterion {#concept-falsification}
+
+A **falsification criterion** is a pre-stated rule specifying
+what evidence would force a claim to be retracted or weakened.
+
+The principle is methodological. Without a pre-stated criterion,
+it is too easy to rationalise inconvenient evidence after the
+fact — "of course we didn't expect that subset to behave that
+way" — without any record of what the original expectation
+actually was. A criterion stated *before* the data arrives makes
+the retraction visible, and the act of retracting honest.
+
+Cedant uses falsification criteria most prominently in the
+evaluation. The Day-2 hypothesis was that one of the two
+candidate models had structurally weaker citation discipline than
+the other, in a way that no prompt change could close. The
+criterion, stated before the evaluation ran, was: *if a revised
+prompt closes the gap to within ten percentage points on a key
+citation metric, the structural-difference claim is retracted.*
+
+When the evaluation ran, the gap closed to 3.2 percentage points
+— well inside the criterion. The claim was retracted on the
+record, with timestamp and commit hash, in the project journal.
+
+The discipline is not unique to this project — it is borrowed
+from a long tradition in scientific methodology — but it is
+unusual enough in software work that it deserves explicit naming.
+A report that names what evidence would change its conclusions is
+a report that has thought about the difference between *believing
+something* and *knowing it*.
+
+---
+
+## 9. The N=70 Benchmark {#concept-benchmark}
+
+A **benchmark** in this context is a fixed set of test questions,
+each with a known correct answer, used to measure how well the
+system performs. The same set is used for every test run, so
+results across different models or different system versions can
+be compared directly.
+
+Cedant's benchmark contains **seventy questions**, hand-written
+by the project author after reading the indexed corpus. Each
+question is one of two types:
+
+- **Answerable questions** (44 of the 70). For these, the author
+  has identified one or more specific paragraphs in the corpus —
+  the *gold chunks* — that contain the answer. The system is
+  scored on whether it cites those gold chunks.
+- **Refusal questions** (26 of the 70). For these, the author
+  has verified that the corpus does *not* contain the answer.
+  The system is scored on whether it correctly refuses.
+
+The refusal questions are themselves partitioned into three
+categories of increasing subtlety: clearly out-of-scope questions,
+questions where the topic *is* discussed in the corpus but the
+specific detail is not, and questions that assume a false premise.
+The hardest of these is the middle category — language models are
+most tempted to confabulate exactly when they have *some* relevant
+material to work from but not enough.
+
+Seventy questions is small by machine-learning benchmark
+standards. The trade-off is deliberate: a smaller benchmark can
+be inspected by hand, the gold answers can be verified
+individually, and failures can be diagnosed one question at a
+time rather than as statistical aggregates. A larger benchmark
+would lose this property, which would matter more than the
+statistical-power gain at this stage of the project.
+
+---
+
+## 10. LLM-as-Judge (and Why This Report Does Not Use It) {#concept-llm-as-judge}
+
+**LLM-as-judge** is a pattern in language-model evaluation where a
+*second* language model is used to score the output of the
+*first*. The judge model is given the question, the answer, and
+the source material, and is asked: does this answer correctly
+represent what the sources say?
+
+The pattern is increasingly common in published evaluations
+because it can measure something that simpler scorers cannot —
+whether the model's *prose* accurately reflects its *sources*,
+not just whether the citations point to the right place.
+
+Cedant's evaluation **does not** currently use LLM-as-judge. The
+decision is deliberate and is recorded in the open-questions log.
+Three reasons:
+
+- A judge model adds another uncalibrated source of error. If the
+  judge model disagrees with a human reviewer, debugging the
+  disagreement is non-trivial. At this stage of the project, the
+  team needs a scorer whose behaviour is fully understood.
+- A judge model adds latency to every test run, which matters
+  because the evaluation is run often and on a fixed time
+  budget.
+- The structural scorer Cedant uses — which checks whether the
+  cited chunks match the expected gold chunks — is honest about
+  what it does not measure. Adding LLM-as-judge would change the
+  honesty profile; the report would have to be careful to
+  distinguish "structural correctness" from "semantic
+  correctness" in every results table.
+
+What the report explicitly *does not claim*, in the absence of an
+LLM-as-judge layer, is that the model's prose is semantically
+correct. The report claims only that citations resolve to the
+right chunks. This is a *structural proxy* for semantic
+correctness, not semantic correctness itself.
+
+Adding LLM-as-judge is one of the explicit items in the planned
+next phase of work.
+
+---
+
+## Where to go from here
+
+Each concept above is referenced from the main report. If you
+arrived here from a section link, the back button will return you
+to where you were reading. If you arrived here directly, the
+**Executive Summary** is the natural place to start; the report is
+organised so that a reader can finish that section knowing what
+the system does, what it does not do, and where the load-bearing
+evidence lives.
+
+For shorter reference-style lookups (acronyms, metric names,
+subset partitions), see the **Glossary & Metrics** page.
