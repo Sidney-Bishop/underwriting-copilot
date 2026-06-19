@@ -2,19 +2,466 @@
 title: "Glossary & Metrics"
 ---
 
-::: {.callout-tip}
-**Plain-language explanations of the terms, metrics, and acronyms** used
-elsewhere in this publication. A non-specialist reader should be able to come
-here, read one definition, and return to the main thread without losing the
-plot. Delete the section if the project doesn't use specialised vocabulary.
+::: {.callout-note icon=false}
+## Plain-Language Summary
+
+A reference for every term, metric, acronym, and project-specific
+convention used elsewhere in this report. Organised by category so a
+reader who hits an unfamiliar term in Section 6 can come here, find
+the definition, and return to where they were. Entries are
+deliberately short — one to three sentences each — and prefer
+plainness over completeness.
 :::
 
-<!--
-prompt:
-  - What terms, acronyms, or jargon does this project use that a generalist
-    wouldn't know?
-  - For each metric you report, what does it actually measure and what counts
-    as a good or bad value?
-  - Where do conventions differ (e.g. one definition in the literature, a
-    slightly different one used here)? Note the choice.
--->
+---
+
+## Evaluation Metrics
+
+The numbers reported in Section 6 are produced by `eval/scorer.py`
+and aggregated by `eval/report.py`. Every metric below appears in
+the canonical `report.md` at
+`eval/results/2026-06-18T15-32-07Z/`.
+
+**`citation_recall`** — For a single answerable question, the
+fraction of gold chunk identifiers that appear at least once in
+the model's emitted citations. Reported as the mean across all
+questions in a subset. Range 0.0 to 1.0; higher is better. The
+load-bearing metric for the project's headline claim.
+
+**`citation_precision`** — For a single answerable question, the
+fraction of the model's emitted citations that match a gold chunk
+identifier. Reported as the mean across all questions in a subset.
+Range 0.0 to 1.0; higher is better. A model that cites every
+retrieved chunk regardless of relevance would have high recall and
+low precision.
+
+**`citation_f1`** — Per-question harmonic mean of precision and
+recall, then averaged across the subset. Range 0.0 to 1.0; higher
+is better. Useful when a single summary statistic is needed but
+the recall/precision split is more diagnostic for tuning work.
+
+**`refusal correctness`** — For a refusal-category question,
+Boolean: `True` if the model emitted the exact refusal phrase
+("I cannot answer this from the provided sources.") and nothing
+else; `False` otherwise. Reported as `correct/total` per cell.
+
+**`hallucinations`** — Absolute count, across an entire cell's
+44-question answerable sweep, of citations whose `chunk_id` did
+not appear in the retrieved context. Lower is better. Zero is the
+hallucination floor; the production-default cell achieves it.
+
+**`retrieval_recall`** — Per-question fraction of gold chunks
+that appear in the retriever's top-k output, computed independently
+of the language model's behaviour. A question with
+`retrieval_recall = 0` is the diagnostic signal for an upstream
+retrieval miss (Q12). Not always reported alongside `citation_recall`
+but used internally to compute the `_retrievable` subsets below.
+
+**`latency_ans` / `latency_ref`** — Mean wall-clock per question,
+in seconds, measured at `AnswerResult.elapsed_seconds`. Covers
+retrieve + generate. `latency_ans` is over the answerable subset;
+`latency_ref` is over the refusal subset. Refusal latency is
+typically lower because the refusal phrase is shorter than a
+citation-rich answer.
+
+**`citation_f1` vs `citation_recall` — which to read** — For
+within-subset comparisons across models, `citation_recall` is the
+load-bearing axis. For absolute system quality, `citation_f1` is a
+more honest summary. The headline tables in Section 6 report both.
+
+---
+
+## Subset Definitions
+
+Each subset in Section 6's subset-analysis table is a strict
+partition of the 44 answerable questions according to a stated
+property. Subset definitions live in `eval/scorer.py` and are
+verified at sweep-startup time.
+
+| Subset | Definition |
+|---|---|
+| `all_answerable` | All 44 answerable questions, regardless of retrieval outcome |
+| `excluding_retrieval_misses` | The 33 answerable questions where at least one cell of the sweep retrieved at least one gold chunk |
+| `single_chunk` | The 22 answerable questions where the benchmark designates exactly one gold chunk |
+| `single_chunk_retrievable` | The 17 questions in `single_chunk` where retrieval succeeded in at least one cell |
+| `multi_chunk` | The 12 answerable questions where the benchmark designates multiple gold chunks in the same document |
+| `within_document` | The 34 answerable questions whose gold chunks all come from a single document (`single_chunk` ∪ `multi_chunk`) |
+| `within_document_retrievable` | The 27 questions in `within_document` where retrieval succeeded |
+| `cross_document` | The 10 answerable questions whose gold chunks span two issuers; the system's clearest weakness subset |
+
+: Subset partitions used in Section 6's subset-analysis table.
+{#tbl-glossary-subsets}
+
+The `_retrievable` qualifier is the key one for reading the table.
+A `_retrievable` subset isolates *answer-stage* quality from the
+*retrieval-stage* bottleneck described in Section 8. The ratio of
+`all_answerable` to `excluding_retrieval_misses` is the size of
+that bottleneck.
+
+---
+
+## Refusal Categories
+
+The refusal benchmark partitions 26 questions across three
+adversarial categories of increasing subtlety. The categories are
+defined in `eval/benchmark.toml` and reported separately in
+Section 6's refusal-correctness table.
+
+**`refusal_out_of_corpus`** (n=10) — Questions whose topic is
+clearly outside the corpus's domain. The system is expected to
+refuse without ambiguity. "What is the maximum solvency capital
+ratio in Bermuda?" is an example shape — the corpus covers UK and
+EU regulation only.
+
+**`refusal_adjacent`** (n=10) — Questions whose topic the corpus
+discusses qualitatively but whose specific demand the corpus does
+not contain. This is the most operationally important refusal
+category: a model is most tempted to confabulate when the topic is
+in scope but the specific demand is not. "What is Swiss Re's
+exact revenue-percentage threshold for thermal coal exclusion?"
+is an example shape.
+
+**`refusal_false_premise`** (n=6) — Questions that assume a fact
+not in the corpus. Even if the model attempted to answer in good
+faith, the answer would be based on a fabricated premise. "Why
+did Munich Re withdraw from the Net-Zero Insurance Alliance in
+2024?" is an example shape — the corpus does not contain that
+event.
+
+---
+
+## Reinsurance and Regulatory Terminology
+
+For readers without an insurance background. Defined as used in
+the corpus and in this report, not in maximum generality.
+
+**Reinsurer** — A company that insures other insurance companies
+("cedants") against catastrophic, aggregated, or specialised
+risks the cedant cannot absorb alone. Munich Re and Swiss Re are
+the two largest globally.
+
+**Cedant** — An insurance company that transfers ("cedes") part
+of its risk portfolio to a reinsurer. The project's codename
+("Cedant") references this term.
+
+**Underwriter** — The reinsurance professional who assesses,
+prices, and accepts or declines individual risks. Most of the
+research work the system supports is what an underwriter would
+otherwise do by hand.
+
+**Treaty reinsurance** — A standing agreement covering an entire
+class of risks the cedant writes; renegotiated annually.
+Contrasted with **facultative reinsurance**, which covers
+individual risks one at a time.
+
+**PRA** — Prudential Regulation Authority. The UK insurance and
+banking supervisor. Publishes Supervisory Statements (SS)
+numbered by year (`SS5/25` is statement 5 of 2025).
+
+**EIOPA** — European Insurance and Occupational Pensions
+Authority. The EU-level insurance supervisor under Solvency II.
+Publishes Guidelines and Recommendations.
+
+**Solvency II** — The EU regulatory framework for insurance
+capital adequacy, governance, and disclosure, in force since
+2016. Sets the structural shape of much EU-jurisdiction
+underwriting documentation.
+
+**Supervisory Statement (SS)** — A PRA publication setting out
+the regulator's expectations for how firms should approach a
+specific topic. `SS5/25` (climate-related risks, 2025) and
+`SS1/21` (operational resilience, 2021) are in the indexed
+corpus.
+
+**ORSA** — Own Risk and Solvency Assessment. An EU-required
+internal risk and capital assessment that insurers must conduct
+at least annually. Heavily referenced in EIOPA's System of
+Governance guidelines.
+
+**Sustainability report** — An annual disclosure by a listed
+reinsurer covering ESG (Environmental, Social, Governance)
+positions: climate exposure, underwriting exclusions, board
+oversight, and investment policy. Munich Re 2023 and Swiss Re
+2024 are in the indexed corpus.
+
+**Thermal coal exclusion** — A common underwriting policy
+position adopted by major reinsurers under climate pressure,
+restricting or refusing coverage for new thermal coal mining or
+coal-fired power generation projects. The benchmark uses Munich
+Re's and Swiss Re's positions on this as a canonical
+cross-document synthesis example.
+
+---
+
+## Retrieval Terminology
+
+**RAG** — Retrieval-Augmented Generation. The general pattern of
+combining a retriever (which finds relevant chunks from a
+corpus) with a language model (which generates an answer using
+those chunks). Cedant is a cited-RAG system.
+
+**Chunk** — A small piece of a source document — typically 100
+to 1,500 tokens of text, with metadata identifying its parent
+document and section path. The unit of retrieval and citation.
+
+**`chunk_id`** — The stable string identifier for a chunk.
+Combines the source `document_id`, a four-digit sequence number,
+and a section slug
+(e.g. `pra_ss5-25_climate__0027__role-of-scenario-analysis`).
+The unit of citation in the model's output.
+
+**Dense retrieval** — Retrieval based on vector similarity between
+the query's embedding and each chunk's embedding. Captures
+paraphrase and semantic similarity. Good at conceptual queries;
+weaker on rare named entities.
+
+**Sparse retrieval** — Retrieval based on token-overlap statistics
+between the query and each chunk. The standard algorithm is BM25.
+Good at exact-match queries on named entities; weaker on
+paraphrase.
+
+**Hybrid retrieval** — Running both dense and sparse retrieval in
+parallel and combining their results. The standard combination
+strategy is Reciprocal Rank Fusion. The basis of Cedant's
+retrieval layer per D009.
+
+**Reciprocal Rank Fusion (RRF)** — Standard rank-based fusion of
+two retrieval rankings. For each document appearing in either
+channel, the fused score is $\sum_c 1/(k + r_c)$ where $r_c$ is
+the document's 1-based rank in channel $c$ and $k$ is a fusion
+constant (60 in Cedant). Sidesteps score-normalisation between
+channels.
+
+**`top_k`** — The number of chunks the retriever returns to the
+language model for a single query. Cedant defaults to 5;
+configurable per call.
+
+**`candidates_per_channel`** — The number of chunks each
+retrieval channel surfaces before fusion. Cedant defaults to 50;
+fusion is applied to the combined candidate pool.
+
+**BGE-M3** — A multilingual embedding model from BAAI
+(`BAAI/bge-m3`) producing 1024-dimensional dense embeddings. Used
+in Cedant via `mlx-embeddings` for Apple Silicon acceleration.
+
+**BM25** — Best Matching 25, the standard statistical retrieval
+ranking algorithm. Cedant uses default parameters `k1=1.5`,
+`b=0.75` (per D011) over a custom Porter-stemmed vocabulary of
+~4,810 terms.
+
+**CLS pooling** — Using the model's special classification-token
+output as the embedding of an entire input sequence. The
+alternative is mean-pooling across all tokens. BGE-M3 was trained
+for CLS pooling; Cedant uses it per D010.
+
+**L2 normalisation** — Scaling an embedding vector so its
+Euclidean norm equals 1. Makes cosine similarity equivalent to
+dot product. Cedant L2-normalises every dense embedding before
+indexing or querying.
+
+**Porter stemming** — A rule-based suffix-stripping algorithm
+that maps inflected English words to a shared root form
+("regulation" / "regulations" / "regulatory" → "regul"). Used in
+Cedant's BM25 tokeniser per D011.
+
+**Qdrant** — An open-source vector database supporting both
+dense and sparse vector storage and a hybrid query API. Cedant
+uses Qdrant in local filesystem-backed mode at
+`scratch/qdrant/`.
+
+**Query/chunk language asymmetry** — The phenomenon, diagnosed
+in Q12, where a query phrased one way (e.g. as a meta-policy
+question) and a chunk written another way (e.g. as a specific
+operational statement) embed into different neighbourhoods of
+the embedding space even when they share underlying topic. The
+root cause of Cedant's 25% retrieval miss rate.
+
+**HyDE** — Hypothetical Document Embeddings. A query-rewriting
+technique that asks the language model to draft a hypothetical
+answer to the query, then embeds that draft for retrieval instead
+of the original query. One of the three v2 remediation paths
+proposed in Q13.
+
+**Cross-encoder reranker** — A second-stage retrieval pass that
+re-ranks a wide candidate set (e.g. top-50) using a model that
+processes the query and each candidate jointly. Generally
+higher-quality than the bi-encoder retrieval used in the first
+stage, but slower per candidate. One of the three v2 paths in
+Q13.
+
+**ColBERT** — A late-interaction retrieval architecture that
+produces multiple vectors per document and computes similarity
+across the matrix at query time. Stronger than single-vector
+retrieval on paraphrase-asymmetric queries; not implemented in
+v1 because it requires switching off `mlx-embeddings` (Q7).
+
+---
+
+## Generation and LLM Terminology
+
+**System prompt** — The instruction text the language model
+receives before the user's question. Defines the model's role,
+the citation format, and the refusal rule. Cedant's frozen
+production prompt is `SYSTEM_PROMPT` in
+`src/underwriting_copilot/answer.py`.
+
+**Temperature** — A parameter controlling the randomness of the
+language model's output. Cedant hard-pins temperature to 0.0 for
+determinism: same query plus same model plus same prompt produces
+the same answer.
+
+**oMLX** — A local serving framework providing an OpenAI-
+compatible chat-completions API for MLX-quantised models on
+Apple Silicon. Cedant uses oMLX at `http://127.0.0.1:8000/v1`.
+
+**MLX** — Apple's open-source array and machine-learning
+framework optimised for Apple Silicon (M-series chips). The
+substrate for Cedant's local-first generation stack.
+
+**Quantisation** — Reducing the numeric precision of a model's
+weights (e.g. from 16-bit float to 4-bit or 6-bit integer) to
+trade a small quality loss for a large reduction in memory and
+latency. Cedant uses Gemma 4 31B IT at 6-bit MLX quantisation
+and Qwen3.6 35B-A3B at 4-bit.
+
+**LLM-as-judge** — Using a separate language model to score the
+output of another model. Cedant does **not** use LLM-as-judge in
+the v1 eval; scoring is structural. LLM-as-judge semantic
+correctness is recorded as Q10.3 and deferred to v2.
+
+---
+
+## Citation and Refusal Contract Terminology
+
+**Citation contract** — The system-level commitment that every
+factual claim in an answer will be followed by a `[chunk_id]`
+referring to a chunk in the retrieved context, validated
+structurally by set-membership at parse time.
+
+**Citation format** — The specific syntactic form
+(`[chunk_id]`) used to mark citations. Defined by the system
+prompt; enforced by the parser regex.
+
+**`CITATION_REGEX`** — The compiled regular expression
+(`\[([A-Za-z0-9_\-]+)\]`) that extracts every citation from the
+model's output. Strict character class rejects spaces and
+punctuation; natural-language brackets in regulatory text are
+not matched.
+
+**Valid citation** — A citation whose `chunk_id` is in the set
+of chunks the retriever surfaced to the language model.
+
+**Hallucinated citation** — A citation whose `chunk_id` is not
+in the retrieved set. Partitioned out of the `citations` field of
+`AnswerResult` and surfaced separately as
+`hallucinated_citations`. Rendered as red `[?]` badges in the
+Streamlit UI.
+
+**Refusal contract** — The system-level commitment that the
+language model will emit the exact phrase *"I cannot answer
+this from the provided sources."* (and nothing else) when the
+retrieved chunks do not contain the answer.
+
+**Refusal detector** — The strict-string-match function that
+checks whether the model's output matches the refusal phrase,
+after stripping trailing whitespace and `.!?` punctuation.
+
+**Partial refusal** — An output that contains the refusal phrase
+as a clause but also includes other content. Rejected by the
+detector; counted as a non-refusal in the eval. None occurred
+on the N=70 sweep.
+
+---
+
+## Methodology and Discipline Terminology
+
+**D-number / Decision** — A numbered architectural decision
+recorded in `docs/decisions.md` with date, status, context,
+decision, and trade-offs. D001 through D015 are lodged for v1.
+Append-only; superseded decisions are marked but not deleted.
+
+**Q-number / Open Question** — A numbered open research or
+design question recorded in `docs/open_questions.md`. Each
+question resolves into a D-entry, a deferral, or a closure.
+Examples cited in this report: Q7 (BGE-M3 multi-vector), Q10
+(GEPA/DSPy), Q11 (production model), Q12 (retrieval miss
+diagnostic, closed), Q13 (retrieval remediation, v2 work-stream).
+
+**Falsification criterion** — A pre-stated rule specifying what
+evidence would force a claim's retraction or weakening. Cedant
+uses falsification criteria for the D014 sweep design (Section
+5). Stating the criterion before running the experiment removes
+post-hoc rationalisation as a coping strategy.
+
+**Pre-stated** — Recorded in `docs/decisions.md` before the
+experiment whose evidence would test the claim. Distinguished
+from post-stated criteria, which are written after the data is
+seen.
+
+**Retraction** — A formal withdrawal of an earlier claim,
+recorded in `docs/journal.md` by timestamp and commit hash,
+append-only. The original claim is not edited; the retraction
+is appended. Cedant has two retractions on record: the Day-2
+family-axis claim and the N=40 within-document parity claim.
+
+**Weakening** — A partial retraction: the qualitative finding
+survives but the quantitative claim does not. The N=40 →
+N=70 within-document parity claim is a weakening, not a full
+retraction.
+
+**Probe** — A cheap, focused experiment designed to falsify a
+specific hypothesis quickly before committing to a larger
+investigation. The Q12 diagnostic ran three probes (top_k
+widening, RRF parameter sweep, dense-channel localisation), each
+cheaper than the next.
+
+**Append-only** — A documentation discipline where history is
+preserved verbatim and updates are appended rather than
+edited-over. `docs/decisions.md`, `docs/journal.md`, and
+`docs/open_questions.md` are append-only by convention; state
+documents (`docs/status.md`, `docs/architecture.md`) are
+overwritten freely.
+
+**Sweep cell** — A single (model, prompt, question) tuple in the
+evaluation grid. The N=70 D014 sweep is 2 models × 2 prompts × 70
+questions = 280 cells.
+
+**Wall-clock** — Elapsed real time, as opposed to CPU time. All
+latency numbers in Section 6 are wall-clock measured at
+`AnswerResult.elapsed_seconds`.
+
+---
+
+## Conventions in This Report
+
+**Bold numbers in cell tables** indicate the production-default
+cell (`gemma-4-31B-it-MLX-6bit × v2`) per D015. Used consistently
+in Sections 6 and 9.
+
+**`monospace` formatting** is used for code identifiers (Python
+class and function names), CLI invocations, file paths, and
+configuration values that appear verbatim in source code or
+configuration files.
+
+**Italics** are used for direct quotations from the system
+prompt, the refusal phrase, and definitional emphasis on first
+use of a term.
+
+**Cross-references to documentation** — paths like
+`docs/decisions.md` or `docs/journal.md` refer to files in the
+repository root's `docs/` directory, not to sections of this
+report. Section references within this report use
+`@sec-NAME-ID` (Quarto cross-reference syntax) where applicable.
+
+**N=40 vs N=70** — Two canonical evaluation sweeps were
+committed: the original D014 sweep (N=40) and the extended
+follow-up (N=70). Numbers in this report are from N=70 unless
+otherwise stated; Section 5 narrates both.
+
+**v1 vs v2** — When unqualified, refers to the system prompt
+version (the two prompts in the D014 sweep). `v1` is the
+original (with the `[chunk_id]` literal placeholder ambiguity);
+`v2` is the revised production prompt (with `<ID>` metasyntax
+and one worked example). When qualified with "version" or
+"release", refers to the project version: v1 is the artefact
+described in this report; v2 is the proposed next phase.

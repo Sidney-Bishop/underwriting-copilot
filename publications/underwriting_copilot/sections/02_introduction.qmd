@@ -2,17 +2,363 @@
 title: "Introduction"
 ---
 
-::: {.callout-note}
-**Why this project exists and the context a reader needs to make sense of it.**
-Set the scene: the world or problem this project sits inside, and what was
-already known or already tried before you started.
+
+::: {.callout-note icon=false}
+## Plain-Language Summary
+
+Reinsurance underwriters spend a large share of their working day reading
+documents — regulatory supervisory statements, internal policy manuals,
+competitors' published positions, broker submissions — and answering
+specific questions against them. This project builds a software system
+that does part of that reading work, but with two unusual constraints:
+every answer must cite the exact paragraph it came from, and the system
+must refuse to answer rather than guess when the answer is not in the
+documents it has access to. This section explains why both constraints
+matter, why the problem is harder than it looks, and what was — and was
+not — in scope for the five-day build.
 :::
 
-<!--
-prompt:
-  - What is the broader problem or domain this project is part of?
-  - What was the state of things before this project — what existed, what
-    didn't, what was painful?
-  - Why is this project worth doing now, in this form?
-  - What should a reader hold in mind as they read the rest of the document?
--->
+---
+
+## Reinsurance Underwriting Research: The Problem Domain {#sec-intro-domain}
+
+A reinsurer's underwriting function exists to assess and price risks
+that primary insurers want to cede onward. The work involves a mixture
+of quantitative modelling (catastrophe risk, frequency–severity
+analysis, exposure aggregation) and qualitative research into the
+regulatory, ESG, and operational context in which a risk sits. The
+quantitative work has mature tooling; the qualitative work, in most
+reinsurers as in most regulated industries, is still substantially a
+matter of an underwriter reading documents and synthesising what they
+find.
+
+The documents are not few and they are not light. A senior
+underwriter assessing a casualty treaty for a UK-regulated cedant
+might typically consult, in a single afternoon:
+
+- One or more PRA Supervisory Statements (climate, operational
+  resilience, prudent person principle), each typically 40–80 pages.
+- EIOPA guidelines on the same or adjacent topics, where the cedant
+  has EEA exposure.
+- The cedant's own published ESG and sustainability disclosures.
+- Internal risk-appetite statements, delegated-authority matrices,
+  and underwriting policies for the relevant lines of business.
+- Comparable disclosures from peer reinsurers, where the question
+  involves benchmarking ("how do Munich Re and Swiss Re differ on
+  thermal coal exclusions?").
+
+In any given afternoon, perhaps fifteen minutes of this reading
+results in a specific paragraph the underwriter wants to cite in a
+committee paper or note to a broker. The other several hours are
+the cost of finding that paragraph. The leverage of a tool that can
+do part of that reading is therefore very high — but only if it can
+deliver something the underwriter can actually use, which means
+delivering a paragraph reference, not a free-form summary.
+
+This is not a chat assistant problem. It is a citation problem.
+
+---
+
+## What "Cited" Has to Mean {#sec-intro-citation}
+
+A natural-language summary of what some document "probably says" is
+not, in this domain, useful output. The reasons are practical and
+audit-flavoured rather than philosophical:
+
+- An underwriter's note to a broker or to an internal committee
+  typically contains direct quotations or paragraph references from
+  the underlying source documents. A tool that produces only a
+  free-form summary cannot be used to produce these references; the
+  underwriter has to go to the document and find the paragraph
+  anyway.
+
+- If the underwriter relies on the tool's summary and is later asked
+  by a senior or by compliance "where did you get this?", the
+  honest answer "from a summarisation tool" is much worse than the
+  honest answer "from paragraph 4.124 of PRA SS5/25, which the
+  tool surfaced."
+
+- An incorrect paragraph reference is auditable. An incorrect
+  free-form summary is much harder to disprove — it requires the
+  underwriter, or the reviewer, to re-read the source document with
+  the summary in hand. This shifts verification work onto the user
+  in the worst possible way, and creates a confident-sounding
+  artefact that the user must now disprove rather than confirm.
+
+The implication is that a tool which **cites loosely or hallucinates
+citations is worse than no tool**. A summary without a citation is
+of limited use. A summary with a fabricated citation — a plausible-
+looking `[chunk_id]` reference that does not, in fact, point at the
+paragraph the prose describes — is actively harmful, because it
+costs the underwriter time to disprove and risks ending up in a
+committee paper as if it were a real reference.
+
+Cedant's central design decision flows from this observation: the
+system treats the citation contract as a first-class, structurally
+enforced output property, not as a stylistic preference for the
+language model to follow when convenient.
+
+---
+
+## What "Refusal" Has to Mean {#sec-intro-refusal}
+
+The same logic, run in the other direction, demands an explicit
+refusal contract. A question that the corpus genuinely does not
+answer must be refused — not paraphrased, not partially answered,
+not answered from the language model's pre-training.
+
+The hard case is not "what is the maximum solvency capital ratio
+in Bermuda?" against a corpus containing only PRA documents.
+That question is so obviously out-of-corpus that any reasonable
+system, or any reasonable underwriter, refuses immediately. The
+hard case is the **adjacent-but-unanswered** question: a question
+whose topic the corpus discusses qualitatively but whose specific
+demand the corpus does not contain. For example, the corpus
+discusses thermal coal exposures qualitatively across several
+issuers, but does not contain a specific revenue-percentage
+threshold from a particular issuer's policy. A model that
+"helpfully" produces a plausible number rather than refusing has
+just manufactured an underwriting-grade fact out of nothing.
+
+The refusal contract is a strict-string detector for this reason.
+The system commits to emitting the exact phrase *"I cannot answer
+this from the provided sources"* when the model determines the
+retrieved context is insufficient, and a structural validator
+rejects partial refusals (where the model both refuses and
+answers). This is conservative — it surfaces more refusals than a
+loose detector would — but the conservatism is the point. A
+production deployment can choose to relax the contract; the
+default posture for a citation-discipline-first artefact is
+strict.
+
+---
+
+## Why This Is Hard {#sec-intro-hard}
+
+Cited RAG over regulatory and corporate-disclosure documents is a
+harder problem than its surface description suggests. Several
+distinct difficulties compound.
+
+**Mixed-vocabulary documents reward hybrid retrieval, not dense
+alone.** A PRA Supervisory Statement contains paragraph numbers,
+specific regulation identifiers (SS5/25, PS3/25), defined terms
+(ORSA, SST), and free-form descriptive prose in the same document.
+Dense embeddings work well on the descriptive prose but are
+unreliable on the named entities; sparse retrieval (BM25) is the
+mirror image. Pure-dense retrieval was rejected on Day 1 evidence
+for this reason; the system uses hybrid retrieval with
+Reciprocal Rank Fusion (D009).
+
+**Citation discipline is a model property, not a prompt property —
+mostly.** The Day-2 sub-finding that prompted the D014 evaluation
+was a model-vs-model citation-format gap that survived prompt
+tweaks. That finding turned out to be partially wrong: the gap
+shrank substantially under a revised prompt (v2, with `<ID>`
+metasyntax and one worked example). The deeper truth — that
+*some* of the gap is intrinsic to model behaviour and *some* is
+prompt-fit — is captured in the eval methodology and in the
+explicit retraction recorded in `docs/journal.md`. This is the
+discipline the project tries to embody: hold a finding, design
+the evaluation that could falsify it, retract on the record
+when the evidence demands it.
+
+**Cross-document synthesis is genuinely hard.** A question whose
+gold answer requires information from two documents (Munich Re's
+and Swiss Re's positions on thermal coal exclusions, for example)
+is materially more difficult than a question whose answer lives
+in one document, even with hybrid retrieval. On the N=70
+benchmark, the cross-document subset (n=10) sees citation_recall
+under 0.25 in every cell of the 2×2 sweep. This is an honest
+limit of the v1 system, not a tunable parameter; production
+deployments must not rely on cross-document synthesis as a
+primary use case (governance commits to this explicitly).
+
+**Out-of-corpus refusal is harder than out-of-corpus answer.** A
+question whose answer is not in the corpus is structurally easier
+to detect than a question whose topic *is* in the corpus but
+whose specific demand is not. The refusal benchmark is
+deliberately partitioned across three categories of increasing
+subtlety (out-of-corpus, adjacent-but-unanswered, false-premise)
+precisely to test the contract under attack from each. The
+production system passes all 26 refusal questions across all 4
+cells of the sweep, but the achievement is in the partitioning of
+the benchmark as much as in the model behaviour.
+
+**Local-first execution constrains the model choices.** A reinsurer
+deployment cannot, in many cases, send queries to a third-party
+API. This rules out the largest available models. The system uses
+local oMLX serving on Apple Silicon, with Gemma 4 31B IT as the
+production default and Qwen3.6 35B A3B as a latency-budget
+alternative. Both are open-weight models running fully offline
+after first weight pull. The cost is that the model ceiling is
+lower than what a hosted frontier model would deliver; the
+benefit is that the data never leaves the operator's machine.
+
+**Honest evaluation is its own design problem.** The eval harness is
+not separate from the system — it is the system's honesty function.
+A small (40-question, then 70-question) hand-crafted benchmark with
+pre-stated falsification criteria, deterministic scoring, two
+canonical runs committed for re-reading, and a methodology document
+written before the headline numbers are claimed: these are
+structural choices that take time and are, in the v1 build budget,
+roughly as costly as the system itself.
+
+---
+
+## Project Objectives {#sec-intro-objectives}
+
+In priority order, the v1 build set out to:
+
+1. **Deliver a working cited-RAG pipeline** over a real (not toy)
+   corpus of regulatory and corporate disclosure documents, with
+   citation and refusal contracts that are structurally enforced
+   rather than relying on the goodwill of the language model.
+
+2. **Produce a reproducible evaluation** against a hand-crafted
+   benchmark covering both answerable and refusal categories,
+   with a falsification-designed sweep that can change the
+   project's interpretation of its own results when the data
+   demands it.
+
+3. **Build the artefact entirely locally** — all retrieval, all
+   inference, no third-party API calls at any pipeline stage —
+   to demonstrate that the local-first posture is a real
+   architectural property rather than a marketing claim.
+
+4. **Document the system honestly enough that a fresh reader can
+   reconstruct** what was built, why the major choices were made,
+   what was deliberately left undone, and what was retracted from
+   earlier versions. The documentation set (`charter.md`,
+   `decisions.md`, `architecture.md`, `governance.md`,
+   `security.md`, `evaluation.md`, `journal.md`, `status.md`,
+   `philosophy.md`, `open_questions.md`, `backlog.md`) is the
+   non-code half of the artefact.
+
+These objectives are deliberately narrower than "build a production
+underwriting copilot." The system is a proof-of-concept and an
+evaluation harness, not a tool ready for live underwriting work.
+
+---
+
+## Scope and Constraints {#sec-intro-scope}
+
+The following explicit constraints shaped every design decision in
+this project. They are recorded here so a reader knows what kind of
+artefact they are reading.
+
+- **Five working days, one engineer.** All decisions were made
+  against this budget. Anything that did not fit is recorded in
+  `backlog.md`, `open_questions.md`, or as a `v2` deferral, rather
+  than half-built and hidden.
+
+- **Public corpus only.** Six documents from four issuers (PRA × 3
+  supervisory statements, EIOPA × 1, Munich Re × 1, Swiss Re × 1),
+  all publicly published. No real reinsurer's internal documents.
+  Three synthetic Sycamore Reinsurance documents (a fictional
+  reinsurer; risk appetite, delegated authority, thermal coal
+  underwriting policy) are present on disk to demonstrate the
+  pipeline structurally extends to internal-style content, but
+  they are not indexed into the v1 retrieval store. The v1 eval
+  numbers are reported against the indexed 4-issuer corpus only.
+
+- **Local execution only.** All models served via oMLX on a single
+  Apple Silicon workstation (MacBook M5 Max, 128 GB unified
+  memory). No third-party API calls at any stage of the pipeline,
+  including the eval. Model weights pulled once from HuggingFace
+  on first use; subsequent runs are fully offline.
+
+- **One operator, no auth.** The system assumes a single trusted
+  local operator. No authentication, no authorisation, no audit
+  logging beyond the git commit trail. Multi-user deployment is
+  explicit v2 work, scoped in `docs/security.md`.
+
+- **Single primary diagnosis per question.** Each answerable
+  benchmark question has a designated gold-chunk set; the eval is
+  structural (did the model cite the chunks we expected?), not
+  semantic (did the model's prose accurately reflect them).
+  LLM-as-judge semantic correctness is recorded as Q10.3 and
+  deferred to v2.
+
+- **Deterministic output.** Temperature is hard-pinned to 0.0 in
+  the generation call. Same query, same corpus, same model, same
+  prompt produces the same answer. This is both a reproducibility
+  property and an auditability property: a reviewer who needs to
+  verify what the system told an underwriter on a specific date
+  can re-run the query and get the same output.
+
+- **Five question categories, two contracts.** The benchmark
+  covers five answerable categories (single-document regulatory,
+  single-document corporate, multi-chunk within-document, two
+  cross-document synthesis cases, retrieval-stress probes) and
+  three refusal categories (out-of-corpus, adjacent-but-
+  unanswered, false-premise). The two contracts the system
+  commits to — citation and refusal — are measured against this
+  partitioning.
+
+---
+
+## A Note on the Five-Day Budget {#sec-intro-budget}
+
+The project's documentation set is unusually heavy relative to the
+codebase, and this is deliberate. A five-day artefact for a
+Lead-level interview is not, principally, an opportunity to write a
+lot of code. It is an opportunity to demonstrate engineering
+judgement under a fixed budget: what was chosen, what was rejected,
+what was deferred, what was retracted, and on what evidence. The
+documentation is the load-bearing surface for that demonstration.
+
+The relevant documents are referenced inline throughout this
+report, but the load-bearing set for a technical reader is:
+
+- `docs/decisions.md` — append-only decision log, D001–D015.
+- `docs/open_questions.md` — Q-numbered research questions, open
+  and resolved.
+- `docs/evaluation.md` — methodology paired with the machine-
+  generated `report.md`.
+- `docs/governance.md` — scope, contracts, and operational posture.
+- `docs/security.md` — threat model and v2 work-stream.
+- `docs/journal.md` — append-only session-by-session reasoning
+  trail, including the two retractions on the record.
+
+A business reader can skip these and read only the **Plain-Language
+Summary** callouts at the top of each section of this report,
+plus the Executive Summary's *Project at a Glance* table.
+
+---
+
+## Organisation of This Document {#sec-intro-organisation}
+
+The remainder of this document is organised as follows:
+
+- **Section 3 — Dataset** describes the indexed corpus, the
+  document selection and preprocessing pipeline, the chunking
+  algorithm (D008), and the corpus metadata schema.
+
+- **Section 4 — Methodology** describes the retrieval, generation,
+  and validation pipeline in full technical detail, including the
+  hybrid-retrieval configuration, the citation regex, and the
+  refusal detector.
+
+- **Section 5 — Experiments** describes the D014 evaluation design,
+  including the pre-stated falsification criterion and the N=40 →
+  N=70 progression.
+
+- **Section 6 — Results** presents the N=70 evaluation numbers
+  with full subset analysis, refusal-correctness breakdown, and
+  the retrieval-miss diagnostic.
+
+- **Section 7 — Pipeline** describes the production-style inference
+  surface — the `Retriever` and `AnswerGenerator` interfaces, the
+  CLI, and the local Streamlit analyst interface.
+
+- **Section 8 — Limitations and Future Work** provides an honest
+  assessment of what the v1 system cannot do, including the
+  retrieval bottleneck (Q12), the cross-document weakness, and the
+  evaluation methodology's own limits.
+
+- **Section 9 — Conclusions** summarises the findings, including
+  the two retractions on record, and the v2 work-stream.
+
+- **Metrics Explainer** (appendix) defines each of the eval metrics
+  in detail for readers who want to read the results section
+  carefully.

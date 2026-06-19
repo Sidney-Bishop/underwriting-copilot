@@ -1,17 +1,621 @@
 ---
-title: "Experiments / Trials"
+title: "Experiments"
 ---
 
-::: {.callout-note}
-**What you actually tried, and how you set each attempt up.** This is the
-section a reader visits to understand what was tested — not yet what was found.
-Delete or repurpose if the project isn't experiment-shaped.
+
+::: {.callout-note icon=false}
+## Plain-Language Summary
+
+This section describes how we tested the system — what claims we made,
+how we designed the tests that could prove them wrong, what the data
+showed, and how we changed our conclusions when the evidence demanded
+it. Two of our early claims were partially or fully retracted on the
+basis of the test results. Both retractions are recorded honestly; the
+discipline of *predicting* what evidence would force a retraction *before*
+running the test is one of the central things this section is meant to
+demonstrate.
 :::
 
-<!--
-prompt:
-  - What did you try? Number or name each distinct experiment / trial.
-  - What was each one designed to find out, and how was success defined?
-  - What were the key parameters, configurations, or variations?
-  - What's intentionally NOT covered here (and why)?
--->
+---
+
+## Experimental Design Principles {#sec-exp-design}
+
+All experiments in this project share four design rules. They are not
+optional, and they are stated up-front because they are visible in
+every cell of every result table that follows.
+
+- **Same gold dataset, same partition.** The benchmark is a single
+  TOML file (`eval/benchmark.toml`). All cells in a sweep are scored
+  against the same questions in the same order. The partition into
+  answerable and refusal categories is fixed at benchmark-design
+  time and recorded in the file's header comment.
+
+- **Deterministic scoring.** The scorer (`eval/scorer.py`) is a pure
+  function: given a question, a gold-chunk-id set, and an
+  `AnswerResult`, it returns the same per-question metrics on every
+  invocation. The aggregator (`eval/report.py`) is similarly pure:
+  given a directory of per-cell JSONL records, it returns the same
+  `report.md`.
+
+- **Pre-stated falsification criteria.** Where a sweep is designed
+  to test a claim (rather than merely characterise behaviour), the
+  criterion that would force the claim to be retracted or weakened
+  is recorded in the decision log *before* the sweep is run. The
+  D014 sweep design includes such a criterion. The intent is to
+  remove post-hoc rationalisation as a coping strategy when results
+  are inconvenient.
+
+- **Logged provenance.** Every sweep run writes a `run_meta.json`
+  alongside its raw data (`raw.jsonl`) recording wall-clock,
+  total cells, errored cells, the model and prompt grid, and the
+  exact `top_k` and `limit` parameters used. The harness writes
+  per-cell records incrementally so a partial run preserves
+  whatever was completed.
+
+::: {.callout-warning}
+## Two sweeps, both canonical
+
+This section reports on **two** D014 sweeps: the original N=40 sweep
+(2026-06-18T12-16-35Z) and an extended N=70 sweep
+(2026-06-18T15-32-07Z). Both runs are committed in
+`eval/results/`. The N=40 sweep is where the headline family-axis
+retraction happened; the N=70 sweep is where a *second* claim
+(within-document parity between models on v2) partially weakened.
+The headline figures elsewhere in this report come from N=70 unless
+otherwise stated.
+:::
+
+---
+
+## The Hypothesis Under Test: Family-Axis Citation Discipline {#sec-exp-hypothesis}
+
+The hypothesis that gave the experimental programme its shape was
+formed on Day 2 from a hand-trial of N=3 questions:
+
+> *Qwen3.6 35B A3B produces systematically malformed citations
+> compared to Gemma 4 31B IT, even with the reasoning trace turned
+> off. The gap is decisive enough to look like a model-family
+> property, not a prompt-fit artefact.*
+
+The specific observation was that Qwen, given a prompt instructing
+it to cite claims using the format `[chunk_id]`, would tend to emit
+placeholder forms like `[chunk_id_1]` or `[chunk_id_2]` instead of
+substituting the actual chunk identifier. Gemma did not exhibit this
+pattern on the same prompt.
+
+The Day-2 framing was "family-axis decisive on rigid-format tasks." The
+implication for the project, if the framing held, was that **model
+choice would dominate over prompt engineering** for citation-discipline
+workloads. This would have been a load-bearing claim for the
+production model selection.
+
+There were three plausible interpretations, of which only the first
+was load-bearing:
+
+1. **Interpretation A — model property.** Qwen has weaker rigid-format
+   discipline than Gemma, independent of the prompt. Prompt tuning
+   might help marginally; model selection is the dominant lever.
+
+2. **Interpretation B — prompt-fit artefact.** Our v1 prompt has an
+   ambiguity (the literal token `[chunk_id]` used as both the
+   placeholder name and the emit format) that Gemma was robust to
+   but Qwen exploited. A better prompt might close most of the gap.
+
+3. **Interpretation C — sampling noise.** N=3 is too small to support
+   a claim either way; the observed gap might disappear at N=30 even
+   without any prompt change.
+
+D014 was designed specifically to discriminate among these three.
+
+---
+
+## The D014 Sweep Design {#sec-exp-d014-design}
+
+The decision to run the D014 evaluation as a falsification exercise
+was committed in `docs/decisions.md` on the day before the sweep
+ran. Three structural choices defined it.
+
+### Plain Python, no framework
+
+The harness is written as plain Python (`eval/runner.py`, 16 KB) with
+no DSPy or other prompt-optimisation framework involvement. This was
+a deliberate choice: the eval is the project's measurement
+infrastructure, and it must work regardless of whether DSPy
+integrates cleanly with the local oMLX serving stack. A framework-
+wrapped harness would have conflated "did the eval work?" with "did
+the framework integration work?" as failure modes, making
+diagnostics harder.
+
+The plain-Python scorer (`eval/scorer.py`, 9 KB) is also reusable as
+a DSPy metric later if the GEPA optimisation work-stream (Q10) ever
+becomes worth pursuing. Building it without the framework keeps
+measurement quality and framework quality as independent debugging
+variables.
+
+### The 2×2 sweep grid
+
+The sweep is a Cartesian product of two model choices and two prompt
+versions, applied to every question in the benchmark.
+
+| Axis | Values |
+|---|---|
+| Model | `gemma-4-31B-it-MLX-6bit` · `Qwen3.6-35B-A3B-4bit` (with `enable_thinking=False`) |
+| Prompt | v1 (current — literal `[chunk_id]` placeholder name) · v2 (revised — `<ID>` metasyntax + one worked example) |
+| Questions | All questions in `eval/benchmark.toml` (40 in the original sweep; 70 in the extension) |
+
+The prompt v2 was hand-designed before the sweep ran, with one
+specific intent: remove the placeholder-name-vs-emit-format
+ambiguity from v1 by introducing a distinct `<ID>` metasyntax for
+the placeholder and giving the model one concrete worked example
+of substituting an actual chunk identifier. Prompt v1 is preserved
+in `eval/prompts.py` as a constant so D014 replay against the
+original prompt remains possible.
+
+### The pre-stated falsification criterion
+
+The criterion was recorded in `docs/decisions.md` before any cell of
+the sweep ran:
+
+> *If Qwen3.6 with prompt v2 closes the gap to Gemma to within 10
+> percentage points on `citation_accuracy`, AND `hallucinated_citation_count`
+> drops to within 2× Gemma's, the Day-2 family-axis interpretation is
+> retracted. Otherwise it is hardened.*
+
+The criterion is asymmetric: it can falsify Interpretation A (model
+property) by passing, but it cannot falsify Interpretation B (prompt
+artefact) by failing — failure could still be consistent with
+sampling noise at N=40. The asymmetry is acknowledged in the D014
+decision and is the reason the post-retraction analysis layers
+multiple subset views rather than a single headline number.
+
+---
+
+## The N=40 Benchmark {#sec-exp-benchmark-n40}
+
+The original D014 benchmark is **40 hand-crafted questions** in
+`eval/benchmark.toml`. The distribution was chosen to exercise the
+specific failure modes the pipeline was most likely to exhibit, not
+to maximise coverage.
+
+| Partition | Count | Composition |
+|---|---|---|
+| **Answerable** | 26 | 7 PRA SS5/25 climate · 5 EIOPA SoG · 5 Munich Re Sustainability · 5 Swiss Re Sustainability · 2 PRA SS1/21 operational resilience · 2 cross-document synthesis |
+| **Refusal** | 14 | 6 out-of-corpus · 4 adjacent-but-unanswered · 4 false-premise |
+
+All gold chunk references were validated against the 461-chunk
+corpus before the sweep ran, via the scorer's startup check. A
+stale gold reference would have caused the harness to fail fast,
+which we preferred to silent zero-recall.
+
+### Why hand-crafted, not auto-generated
+
+Auto-generated benchmarks for RAG systems are usually questions whose
+gold chunk is the one the embedding model thinks is most similar to
+the question. They produce inflated scores because the
+embedding-distance proximity that produced the question is the same
+property the retriever optimises against. They are also bad at
+testing the three refusal categories because the generator does not
+know what is *not* in the corpus.
+
+Hand-crafting the questions takes longer but produces a benchmark
+where each question tests a specific property of the pipeline:
+
+- Single-chunk questions test simple retrieve-then-cite paths.
+- Multi-chunk questions test within-document synthesis.
+- Cross-document questions test multi-source reasoning.
+- The three refusal categories test the refusal contract under
+  increasingly subtle adversarial framing.
+
+The benchmark is small (40, then 70) but deliberately structured.
+The structure shows up in the subset analysis: the headline number
+hides a wide variance across question types, which is exactly the
+point.
+
+---
+
+## N=40 Results: Family-Axis Retracted {#sec-exp-n40-results}
+
+The N=40 sweep ran in 23.7 minutes wall-clock on the production
+MacBook M5 Max, with both models warm-loaded in oMLX before the
+sweep began. Zero cells errored.
+
+The headline result, recorded in commit `7e60ef4` ("Day 3 close —
+family-axis retraction; Q11+Q12 opened"):
+
+| Cell | Mean citation_recall | Mean hallucinated_citation_count | Mean latency (ans / ref) |
+|---|---|---|---|
+| Qwen3.6 35B-A3B × v1 | 0.481 | 15 | 4.0s / 1.2s |
+| **Qwen3.6 35B-A3B × v2** | **0.750** | **3** | **3.4s / 1.3s** |
+| Gemma 4 31B IT × v1 | 0.782 | 0 | 17.2s / 7.2s |
+| Gemma 4 31B IT × v2 | 0.782 | 0 | 20.7s / 7.9s |
+
+: N=40 full-sample headline by cell. Mean `citation_recall` is the
+fraction of gold chunks that appear in the model's citations,
+averaged across the 26 answerable questions. {#tbl-exp-n40-headline}
+
+The **observed Qwen v2 — Gemma v2 gap is 3.2 percentage points**
+(0.750 vs 0.782) on full-sample mean citation_recall, well within
+the 10-point pre-stated threshold. This was driven by a +26.9-point
+movement on Qwen under v2 (0.481 → 0.750); Gemma is prompt-robust
+(identical recall under both prompts).
+
+The hallucination axis is where the criterion gets technically
+awkward. Qwen × v2 produced 3 hallucinated citations across the
+sweep, against Gemma's floor of 0. The strict reading of "within 2×
+Gemma's" is unsatisfied because 2 × 0 = 0; on a literal read the
+hallucination arm fails. But the *spirit* of the criterion — that
+v2 should not amplify confabulation relative to the alternative
+model — is clearly met: Qwen v1's 15 hallucinations collapsed to 3
+under v2, a 5× reduction. The recall arm was met decisively. On
+the hallucination arm we record the technical fail and the
+qualitative pass openly, rather than tidying the conclusion.
+
+The Day-2 family-axis interpretation was **retracted** in the
+`docs/journal.md` Day-3 entry. The retraction is recorded by commit
+hash rather than by editing the original entry. The journal entry
+is honest about which framing was wrong, why the prompt-fit
+interpretation is now the load-bearing one, and what the residual
+non-zero hallucination count on Qwen means (a small genuine model
+behaviour difference, but not the load-bearing one).
+
+### What N=40 also surfaced
+
+Two further sub-findings emerged from the same sweep that became
+the basis of new open questions:
+
+- **Within-document parity.** On `within_document_retrievable`
+  (n=21), Gemma v2 and Qwen v2 produced **identical** mean citation
+  recall (0.929 each). On `single_chunk_retrievable` (n=15), both
+  cells were at 1.000. The full-sample 3.2pp gap concentrated
+  entirely in the 2 cross-document questions (Gemma 0.417, Qwen
+  0.000). This produced a tentative second claim: *on within-
+  document workloads the two models are equivalent.*
+
+- **Retrieval-stage miss rate.** Three of the 26 answerable questions
+  (11.5%) had `retrieval_recall = 0` across all four cells. The
+  gold chunks were never retrieved, regardless of model or prompt.
+  Recorded as Q12 (next sub-section).
+
+The first sub-finding (within-document parity) was promoted to a
+second testable claim. The second sub-finding (retrieval misses)
+triggered a follow-on investigation that ran across Day 4.
+
+---
+
+## Q12: The Retrieval-Miss Investigation {#sec-exp-q12}
+
+The 11.5% retrieval miss rate on N=40 was the most operationally
+important finding of the Day-3 sweep, because it localised a chunk
+of the system's headline accuracy gap *upstream* of the answer
+model. No prompt tuning, model swap, or reranker would help with a
+question whose gold chunk is never in the top-k.
+
+Three questions failed retrieval across all four cells:
+
+- **q001** — *Which entities does PRA SS5/25 apply to?* Gold:
+  `pra_ss5-25_climate__0005__scope`. The dedicated scope chunk was
+  not in any cell's top-5.
+- **q004** — *What three characteristics make climate-related risks
+  distinctive?* Gold: `pra_ss5-25_climate__0007__characteristics-of-
+  climate-related-risks`. Same shape: narrow query, designated chunk
+  not surfaced.
+- **q013** — *What is Munich Re's underwriting policy on new thermal
+  coal mines and power plants?* Gold:
+  `munich_re_sustainability_2023__0053__thermal-coal`. The
+  diagnostically interesting one: chunk literally titled
+  `thermal-coal`, query containing verbatim "thermal coal." BM25
+  alone should have surfaced this near the top.
+
+Q12 was lodged. The investigation that resolved it is recorded in
+`docs/decisions.md` and is included here as an example of the
+project's diagnostic discipline.
+
+### Probe 1 — `top_k` widening (cheapest)
+
+Hypothesis: top_k=5 was a Day-2 gut-feel value; raising it might
+surface the gold chunks at ranks 6–10.
+
+Test: re-ran the three failing questions at `top_k=8` via
+`uv run python -m eval.runner --question-ids q001,q004,q013 --top-k 8`.
+All three still missed. **Hypothesis falsified.** Not a top_k
+truncation problem.
+
+### Probe 2 — RRF parameter sweep (medium cost)
+
+Hypothesis: RRF's $k$ fusion constant or the per-channel candidate
+width might be downweighting strong BM25 matches when dense
+disagrees.
+
+Test: swept six configurations of `(candidates_per_channel, rrf_k)`:
+`(50, 60)`, `(200, 60)`, `(50, 20)`, `(200, 20)`, `(461, 20)`,
+`(461, 10)`. Best-case configuration moved q013 from rank #20 to
+rank #11; q001 and q004 barely moved. None landed in top-5 under
+any configuration. **Both candidate-set-width and RRF-flatness
+hypotheses falsified.**
+
+### Probe 3 — dense-channel localisation (deepest)
+
+Direct dense-only query against the 461-chunk corpus for q013
+placed `munich_re_sustainability_2023__0053__thermal-coal` at
+**rank 107**. The gold chunk was beaten by 106 chunks the dense
+embedding considered more semantically similar — including Swiss
+Re's parallel thermal-coal chunk at rank 1.
+
+A **self-retrieval sanity check** confirmed the chunk's vector is
+valid: querying with the chunk's own first 200 characters retrieved
+it at rank 1 with score 0.811, with a substantial gap to rank 2
+(0.696). The index is sound; the asymmetry is between query and
+chunk *representations*.
+
+**Alternative-phrasing probe** then localised the asymmetry
+precisely:
+
+| Phrasing | Gold rank |
+|---|---|
+| "thermal coal mines coal-fired power plants insurance" | 1 |
+| "Munich Re no longer insures thermal coal mines" | 3 |
+| "Munich Re thermal coal" | not in top-5 |
+| "stand-alone risks thermal coal Munich Re" | not in top-5 |
+
+The pattern is that queries phrased like the chunk's **claim verbs**
+("no longer insures") embed close to it. Queries phrased like
+**meta-policy questions** ("what is X's policy on Y") embed close
+to other chunks that themselves discuss policies meta-statically —
+investment policy chunks, decarbonisation approach chunks, etc.
+
+### Diagnostic conclusion: query/chunk language asymmetry
+
+The Q12 root cause is a well-understood limitation of single-vector
+dense retrieval. CLS-pooled BGE-M3 (per D010) encodes *what this
+passage is about* at a topical level. The gold chunk is about a
+specific operational policy; the benchmark query is phrased as a
+meta-statement about a policy class. These land in different
+semantic neighbourhoods of the embedding space.
+
+RRF fusion cannot rescue chunks the dense channel ranks at #107
+because the candidate set realistically caps below 500. The
+asymmetry is structural, not a tuning issue.
+
+### Remediation deferred (Q13)
+
+Three remediation paths were scoped, each real engineering work
+outside the five-day budget:
+
+1. **LLM query rewriting / HyDE.** Use the LLM to expand or rephrase
+   the query before embedding. Estimated 1–2 hours of work plus
+   per-query LLM latency.
+2. **Cross-encoder reranker.** Fetch a wide candidate set, then
+   re-rank the top-50 with a cross-encoder. ~3–4 hours plus
+   reranking latency.
+3. **BGE-M3 multi-vector channel (Q7 revisit).** Move from
+   single-vector MLX to FlagEmbedding for full multi-functionality
+   including ColBERT-style late interaction. ~4–8 hours, breaks
+   the MLX-everywhere posture of D009.
+
+Q13 records the three paths as the v2 work-stream. None was
+implemented in v1 because the available data already cleanly
+falsified two cheaper hypotheses (top_k, RRF tuning), and a
+half-implemented reranker would have introduced more uncertainty
+than it removed.
+
+### Meta-finding worth recording
+
+The Q12 arc is the project's clearest example of "form hypothesis,
+design test that can falsify it, accept the falsification." Probes
+1 and 2 each took under a minute to design and execute; either
+could have surfaced before any code change. The wrong discipline —
+"form hypothesis, implement the fix without testing it, ship and
+hope" — would have produced a half-tuned reranker that did not
+address the underlying asymmetry. The right discipline produced a
+diagnosis cheap enough to fit in the budget alongside the rest of
+Day 4.
+
+---
+
+## The N=70 Extension {#sec-exp-n70}
+
+After Q12 closed, two questions remained open:
+
+- **Q11 — production model choice.** The N=40 data supported a Gemma
+  default on hallucination floor and on cross-document synthesis,
+  but the latter was N=2 — too small to drive a production decision
+  on its own.
+- **Within-document parity claim.** The N=40 "both models 0.929 on
+  within-document-retrievable" finding looked clean but was
+  potentially partition-sensitive.
+
+To pressure-test both, the benchmark was extended from 40 to 70
+questions on Day-5 morning, by adding more questions in each
+existing category. The extended sweep ran the same 2×2 grid as the
+original, producing 280 cells (vs the original 160). Wall-clock
+extended to 45.7 minutes; zero errored cells.
+
+The N=70 benchmark composition:
+
+| Partition | N=40 | N=70 |
+|---|---|---|
+| Answerable | 26 | 44 |
+| Refusal | 14 | 26 |
+| Cross-document subset | 2 | 10 |
+
+The cross-document subset expansion from N=2 to N=10 was the most
+load-bearing single change, because it is the subset that drives
+the production model choice.
+
+---
+
+## N=70 Results: Two Updates to the Record {#sec-exp-n70-results}
+
+The full per-cell headline from the N=70 extended sweep:
+
+| Cell | citation_recall | citation_precision | hallucinations | refusals | latency (ans / ref) |
+|---|---|---|---|---|---|
+| Qwen × v1 | 0.386 | 0.296 | 23 | 26/26 | 3.3s / 0.8s |
+| Qwen × v2 | 0.545 | 0.483 | 7 | 26/26 | 3.4s / 0.9s |
+| Gemma × v1 | 0.598 | 0.524 | 0 | 26/26 | 21.7s / 8.4s |
+| **Gemma × v2** | **0.598** | **0.520** | **0** | **26/26** | **22.9s / 8.6s** |
+
+Two updates to the record follow from these numbers.
+
+### Update 1 — Family-axis retraction holds (and strengthens)
+
+On the extended sample, the **Qwen v2 — Gemma v2 gap is 5.3
+percentage points** (0.545 vs 0.598), still well inside the
+10-point threshold. The Qwen prompt-v2 movement is +15.9 percentage
+points (0.386 → 0.545), against Gemma's prompt-robust 0.598 on
+both prompts. The v1 hallucination count on Qwen also drops sharply
+under v2 (23 → 7). The Day-3 retraction of the family-axis
+interpretation is reaffirmed by the larger sample.
+
+The gap widens slightly relative to N=40 (5.3pp at N=70 vs 3.2pp
+at N=40), consistent with the *within-document parity weakening*
+recorded as Update 2 below — the additional questions at N=70
+exercise more challenging within-document subsets where Gemma's
+small edge becomes visible.
+
+### Update 2 — Within-document parity weakens
+
+The N=40 "0.929 / 0.929 within-document parity" claim does **not**
+survive the larger sample. Subset analysis from the N=70 report:
+
+| Subset | n | Qwen × v2 | Gemma × v2 | gap |
+|---|---|---|---|---|
+| `single_chunk_retrievable` | 17 | 0.941 | 1.000 | 5.9pp |
+| `within_document_retrievable` | 27 | 0.833 | 0.889 | 5.6pp |
+| `multi_chunk` | 12 | 0.542 | 0.583 | 4.1pp |
+
+Gemma now leads on every within-document subset. The gap is small
+(~5pp), consistent across subsets, and not concentrated in any one
+question type — which is what a real but partition-sensitive
+advantage looks like, distinct from a sample-noise artefact (which
+would scatter directionally) or a load-bearing model property
+(which would manifest as a wider, more chapter-skewed gap).
+
+The Day-4 within-document parity claim is recorded as **weakened,
+not retracted**. The qualitative point — that prompt v2 closes
+most of the gap on within-document workloads — survives. The
+quantitative point — that the gap closes to zero — does not.
+
+This is the project's second retraction on the record. The journal
+entry that records it is honest about what survives and what does
+not, and the section's headline numbers throughout this report are
+the N=70 figures, not the N=40 figures.
+
+### Update 3 — Cross-document is hard for everything tested
+
+The cross-document subset expansion to N=10 makes the cross-document
+finding load-bearing rather than indicative:
+
+| Subset | n | Qwen × v1 | Qwen × v2 | Gemma × v1 | Gemma × v2 |
+|---|---|---|---|---|---|
+| `cross_document` | 10 | 0.150 | 0.150 | 0.233 | 0.233 |
+
+All four cells score below 0.25 mean citation_recall. Gemma
+maintains a small lead but no cell is close to acceptable. The
+production system **must not be relied on for cross-document
+synthesis as a primary use case**, and the governance document
+commits to this explicitly. Whether the gap is a model-capability
+limit, a retrieval limit (cross-document questions exercise the
+same retrieval pipeline that has a 25% miss rate; the multi-issuer
+retrieval problem is harder than the single-issuer one), or both,
+is not resolved by these data and is recorded as future work.
+
+### Update 4 — Retrieval miss rate worsens at scale
+
+The N=40 retrieval miss rate was 11.5% (3/26). On N=70 it is
+**25.0% (11/44)**. The Q12 diagnostic is the same — query/chunk
+language asymmetry on single-vector dense pooling — and the
+remediation menu (Q13) is unchanged. But the size of the underlying
+problem is roughly twice what N=40 suggested, which firms up the
+priority of Q13 in v2 planning.
+
+---
+
+## Q11 Resolved: D015 {#sec-exp-q11-resolution}
+
+With Q12 closed (diagnosed, deferred) and the N=70 data in hand,
+the production model decision Q11 resolved cleanly:
+
+- **Citation discipline:** Gemma's hallucination floor at 0 (vs
+  Qwen v2 at 7) and Gemma's robustness to prompt change (recall
+  identical under v1 and v2) both argue for Gemma.
+- **Within-document quality:** Gemma leads by ~5pp on the N=70
+  subsets. Small but consistent.
+- **Cross-document quality:** Gemma leads on N=10 (0.233 vs
+  0.150), but neither cell is good enough to make the difference
+  decisive.
+- **Refusal correctness:** tied (both models 100%).
+- **Latency:** Qwen wins ~6×. Acceptable cost for an underwriting-
+  research workflow where the alternative is a human spending
+  several minutes on the same query.
+
+**D015 was lodged with Gemma 4 31B IT as the production default.**
+The decision includes the `UNDERWRITING_COPILOT_MODEL` env-var
+override path, so deployments with stricter latency budgets can
+swap to Qwen without code change. A status note appended to D015
+on 2026-06-18 records that the N=70 sweep strengthened the
+rationale: the within-document advantage was clearer at the larger
+sample than the N=40 parity finding had suggested.
+
+---
+
+## What Was Deliberately Not Tested {#sec-exp-not-tested}
+
+Three potential evaluation extensions were considered and **not**
+run in v1, with the deferral recorded so a reviewer can see the
+boundary of the evidence base.
+
+- **Multi-seed run-variance.** Each cell of the sweep is a single
+  run. The deterministic temperature-0 setting and pinned RNG seeds
+  make the cell results bit-reproducible *for the same software
+  state*, but the eval does not measure run-to-run variance from
+  re-seeded sweeps. The qualitative findings (the retraction, the
+  weakening, the diagnostic) are robust to any plausible
+  single-seed variance, but precise digits past the first decimal
+  should be read with that caveat.
+
+- **LLM-as-judge semantic correctness.** The scorer measures whether
+  the model cited the chunks we expected it to cite; it does not
+  measure whether the model's natural-language prose *accurately
+  reflects* what those chunks say. An LLM-as-judge layer (e.g.
+  Claude scoring whether the answer is supported by the cited
+  chunks) is recorded as Q10.3 and deferred. Until that layer
+  lands, "citation correctness" should be read as a structural
+  proxy for semantic correctness, not as semantic correctness
+  itself.
+
+- **A wider model survey.** The 2×2 grid tested two specific
+  candidates because they were the ones that ran cleanly on the
+  oMLX stack at a usable size. Gemma 4 12B was attempted and
+  blocked at the mlx_vlm layer (Q9, closed-deferred). A broader
+  survey — Llama 3 70B variants, smaller Gemma sizes, the Qwen
+  reasoning variants — would strengthen generalisation but does
+  not fit the five-day budget.
+
+- **GEPA / DSPy systematic prompt optimisation (Q10).** After D014's
+  hand-designed v2 closed most of the family-axis gap, the case
+  for layering DSPy's GEPA optimiser on top weakened to
+  "exploratory, not load-bearing." Q10 remains open as a possible
+  v2 work-stream.
+
+---
+
+## Experiments at a Glance {#sec-exp-glance}
+
+| | |
+|---|---|
+| **Sweep design** | 2×2 grid: models × prompts, fully crossed; same questions in every cell |
+| **Models swept** | `gemma-4-31B-it-MLX-6bit`, `Qwen3.6-35B-A3B-4bit` (`enable_thinking=False`) |
+| **Prompts swept** | v1 (literal `[chunk_id]` placeholder), v2 (`<ID>` metasyntax + worked example) |
+| **Benchmark progression** | N=40 (canonical D014) → N=70 (extension); both runs committed |
+| **N=40 wall-clock** | 23.7 min, 160 cells, 0 errored |
+| **N=70 wall-clock** | 45.7 min, 280 cells, 0 errored |
+| **Pre-stated falsification criterion** | Qwen v2 closes gap to Gemma to ≤10pp on citation_recall + Qwen v2 hallucinations ≤ 2× Gemma's |
+| **Observed (N=40)** | Qwen v2 − Gemma v2 gap = 3.2pp → recall criterion met decisively; hallucination criterion fails on strict read (2 × 0 = 0) but Qwen v1 → v2 hallucinations 15 → 3 → **family-axis retracted** |
+| **Observed (N=70)** | Qwen v2 − Gemma v2 gap = 5.3pp → recall criterion still met; retraction reaffirmed |
+| **Retractions on record** | 2 — family-axis (N=40) and within-document parity (N=70 weakening) |
+| **Q12 outcome** | Closed-diagnosed; root cause = query/chunk language asymmetry on CLS-pooled dense embeddings |
+| **Q11 outcome** | Resolved → D015 (Gemma 4 31B IT as production default) |
+| **Q13 status** | Open v2 work-stream: HyDE-style query expansion / cross-encoder reranker / BGE-M3 multi-vector revisit |
+| **Reproduction** | `uv run python -m eval.runner` (full sweep, ~46 min) + `uv run python -m eval.report` (regenerate `report.md` from `raw.jsonl`) |
+| **Canonical runs** | `eval/results/2026-06-18T12-16-35Z/` (N=40) · `eval/results/2026-06-18T15-32-07Z/` (N=70) |

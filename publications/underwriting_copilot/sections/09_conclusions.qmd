@@ -2,17 +2,181 @@
 title: "Conclusions"
 ---
 
-::: {.callout-note}
-**What this project amounts to and what comes next.** Pull together the
-threads — what was attempted, what was found, what it changes — and point at
-the direction of further work.
+
+::: {.callout-note icon=false}
+## Plain-Language Summary
+
+The system works as designed on the question shape it was built for —
+single-document, single-chunk citation against indexed regulatory and
+corporate documents, with strict refusal when the corpus does not
+answer the question. It does not yet work on cross-document
+synthesis. Most of its remaining quality gap is upstream in
+retrieval, not downstream in the language model. The work in this
+report is as much a demonstration of engineering judgement under a
+fixed budget as it is a demonstration of software: the retracted
+claims, the deferred work, and the diagnostic discipline are the
+deliverable as much as the code is.
 :::
 
-<!--
-prompt:
-  - In one paragraph, what does this project conclude?
-  - What does the work change about how the problem is understood or tackled?
-  - What are the natural next steps — extensions, follow-ups, open threads?
-  - If someone read only the executive summary and these conclusions, would
-    they get the right picture? If not, what's missing?
--->
+---
+
+## What This Project Concludes {#sec-conclusions-headline}
+
+A cited-RAG pipeline over six public regulatory and corporate
+documents (15.3 MB; 461 chunks across four issuers) achieves, on a
+70-question hand-crafted benchmark using open-weight local models on
+Apple Silicon:
+
+- **0.598 mean citation_recall** on the full answerable subset;
+  **0.798** on the subset where retrieval succeeds upstream;
+  **1.000** on single-chunk-retrievable questions.
+- **104 of 104 refusal-category questions correctly refused** across
+  the four-cell sweep, including the adjacent-but-unanswered and
+  false-premise categories that are most prone to confabulation.
+- **Zero hallucinated citations** on the production-default cell
+  across the full 44-question answerable sweep.
+- **No pipeline stage requiring a remote call**, including the
+  evaluation.
+
+These numbers are not, in absolute terms, headline-grabbing — the
+system has a real ~60% top-line — but they are precise about *where*
+the system works and *where* it does not. The 0.798 answer-stage
+ceiling is the more honest read of what the language model can do
+when given correctly-retrieved chunks; the 0.598 headline reflects
+retrieval failures upstream that no answer-model swap can fix.
+
+The work demonstrates that **cited RAG on regulatory and corporate
+disclosure documents is tractable with open-weight local models**,
+and that the dominant first-order constraint is retrieval, not
+generation.
+
+---
+
+## What This Work Changes {#sec-conclusions-changes}
+
+For a reinsurer evaluating cited-RAG approaches for underwriting
+research, three concrete things change:
+
+- **The citation contract can be structurally enforced.** Citation
+  validation by set-membership against the retrieved context is
+  cheap, deterministic, and catches confabulation regardless of
+  whether the language model honoured the prompt instruction. A
+  deployment does not have to trust the model to cite correctly; it
+  can structurally verify.
+
+- **The refusal contract can be structurally enforced too.** The
+  exact-phrase detector is brittle by design and works precisely
+  because of that brittleness. Both candidate models honour the
+  contract in 100% of refusal benchmark cases across both prompt
+  versions. The refusal partition into three adversarial categories
+  (out-of-corpus, adjacent-but-unanswered, false-premise) is the
+  load-bearing part — the contract is tested under attack, not just
+  under cooperative conditions.
+
+- **Local-first execution is a real architectural property.** All
+  inference — retrieval, embedding, generation — runs on the
+  operator's hardware after first weight pull. For a deployment that
+  cannot send underwriting queries to a third-party API, this is a
+  hard requirement, and the v1 system shows the requirement does not
+  prevent a working artefact.
+
+What the work does *not* change is the cross-document synthesis
+problem, which remains hard for every model tested at every prompt
+version. A reinsurer relying on cross-document synthesis as a
+primary use case should not be using this system today.
+
+---
+
+## On the Methodology {#sec-conclusions-methodology}
+
+Two claims this project once held have been retracted on the record
+(Sections 5 and 8). A third claim — that the system's headline
+number is dominated by the answer model — was diagnosed as wrong
+during Q12 and replaced with the correct diagnosis (retrieval).
+The discipline that produced these corrections is, in some ways,
+the most transferable thing in the report.
+
+The discipline has three moving parts:
+
+- **Pre-stated falsification criteria.** A claim that cannot say
+  in advance what evidence would force its retraction is not a
+  claim; it is a position. D014 specified the falsification
+  criterion before the sweep ran; the criterion was published in
+  `decisions.md`; the criterion fired; the claim was retracted.
+- **Append-only history with timestamp and commit hash.** The
+  journal entry that records each retraction is appended, not edited
+  back over the original claim. A reviewer doing a "what did this
+  project get wrong?" audit can read the original claim and the
+  retraction side by side. This is uncomfortable; it is also the
+  only way to make the audit possible.
+- **Honest framing of partial passes.** The N=40 hallucination arm
+  of the D014 criterion technically failed (because 2 × 0 = 0), but
+  the spirit of the criterion was met (15 → 3 is a 5× reduction).
+  Section 5 records both the technical fail and the qualitative
+  pass openly. A tidied conclusion would have been shorter; the
+  honest one is more useful.
+
+For a Lead-level engineering role, this discipline is the deliverable
+the report is meant to demonstrate. It works the same way under
+positive evidence as under negative evidence — the same machinery
+that catches the family-axis retraction would catch a future v2
+claim. It is, in effect, the project's epistemic infrastructure.
+
+---
+
+## What Comes Next {#sec-conclusions-next}
+
+The v2 work-stream prioritises the largest source of headline
+weakness. From Section 8, in order:
+
+1. **Close the retrieval ceiling (Q13).** Three remediation paths
+   identified; cheapest first (HyDE-style query expansion, ~1–2
+   hours). The eleven retrieval-miss questions on the N=70 benchmark
+   are the test set; the order-of-magnitude question for v2 is "how
+   many of those eleven the remediation surfaces in top-5."
+2. **LLM-as-judge semantic scoring (Q10.3).** Adds the dimension
+   structural scoring cannot reach. Right sequencing: run it on the
+   existing canonical N=70 runs first, see how much it shifts the
+   headline, then decide on integration.
+3. **Multi-seed variance estimates.** Half a day of eval rerunning
+   plus aggregation code; produces calibrated precision claims.
+4. **Index the synthetic Sycamore documents and extend the
+   benchmark accordingly.**
+5. **Corpus and benchmark expansion** with more issuers and more
+   questions across more authors.
+6. **Operational hardening** for any move toward multi-user
+   deployment.
+
+The lower-priority items — GEPA/DSPy systematic prompt optimisation
+(Q10), the BGE-M3 multi-vector revisit (Q7) — remain open but no
+longer load-bearing after D014's hand-designed v2 prompt closed
+most of the gap they were originally posed against.
+
+---
+
+## A Note on What This Artefact Is For {#sec-conclusions-artefact}
+
+This report describes a five-day artefact built for a Lead
+Generative AI interview at a reinsurance firm. The five-day budget
+is not an apology; it is the constraint that shapes everything in
+the report. Within five days a single engineer cannot ship a
+production-ready underwriting copilot. What can be shipped is
+evidence of how the engineer makes decisions under budget — what
+gets built, what gets rejected, what gets deferred, what gets
+retracted, and on what evidence.
+
+The documentation set (`charter.md`, `decisions.md`,
+`architecture.md`, `governance.md`, `security.md`, `evaluation.md`,
+`journal.md`, `status.md`, `philosophy.md`, `open_questions.md`,
+`backlog.md`) is unusually heavy relative to the codebase, and
+this is deliberate. It is the non-code half of the evidence. A
+reader who finds the documentation excessive is reading the
+artefact as if it were code-only; a reader who finds it
+load-bearing is reading it the way it was intended.
+
+If the report leaves a reader with the right picture of what was
+built, why it was built that way, what works, what does not, and
+what would have to be true for the conclusions to change, the
+artefact has done its job. None of this requires the system itself
+to be ready for production — only for the engineering judgement
+behind it to be visible.

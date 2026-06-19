@@ -2,16 +2,406 @@
 title: "Results"
 ---
 
-::: {.callout-note}
-**What you found.** The headline numbers, key tables or charts, and the
-honest interpretation of what they mean. Save caveats for limitations.qmd;
-this section is for what the evidence actually shows.
+
+::: {.callout-note icon=false}
+## Plain-Language Summary
+
+This section presents what the evaluation actually measured. The
+production-default cell (Gemma 4 31B IT × v2 prompt) cites the
+correct chunks for roughly 60% of all answerable questions and
+roughly 89% of the questions where retrieval succeeds upstream. It
+refuses every question in the refusal benchmark correctly (26 out
+of 26), and produces zero hallucinated citations across the
+44-question answerable set. The numbers are not flatly impressive
+— the system has a real retrieval-stage bottleneck that caps the
+production-default ceiling — but they are precise about *where*
+the system works and where it does not, which is the result a
+falsification-designed evaluation is meant to give.
 :::
 
-<!--
-prompt:
-  - What's the single most important finding?
-  - What do the supporting numbers / outputs / artifacts look like?
-  - Where did the results match expectations, and where did they surprise you?
-  - What's the simplest summary table or chart that captures the outcome?
--->
+---
+
+## Headline: Per-Cell Summary {#sec-results-headline}
+
+The N=70 D014 sweep produced four cells, each scoring 70 questions
+(44 answerable + 26 refusal). The sweep ran cleanly: zero errored
+cells, 45.7 minutes total wall-clock, 280 cells in total. The
+production-default cell is highlighted in bold.
+
+| Cell | citation_recall | citation_precision | citation_f1 | refusal | hallucinations | latency_ans | latency_ref |
+|---|---|---|---|---|---|---|---|
+| Qwen3.6-35B-A3B-4bit × v1 | 0.386 | 0.296 | 0.319 | 26/26 | 23 | 3.3 s | 0.8 s |
+| Qwen3.6-35B-A3B-4bit × v2 | 0.545 | 0.483 | 0.489 | 26/26 | 7 | 3.4 s | 0.9 s |
+| gemma-4-31B × v1 | 0.598 | 0.524 | 0.537 | 26/26 | 0 | 21.7 s | 8.4 s |
+| **gemma-4-31B × v2** | **0.598** | **0.520** | **0.533** | **26/26** | **0** | **22.9 s** | **8.6 s** |
+
+: N=70 headline by cell. `citation_recall` is the mean fraction of
+gold chunks the model cited; `citation_precision` is the mean
+fraction of the model's citations that were gold; `citation_f1` is
+the per-question harmonic mean. `refusal` is correct refusals out
+of 26 refusal-category questions. `hallucinations` is the absolute
+count across all 44 answerable questions of citations whose
+`chunk_id` did not appear in the retrieved context. Latency is mean
+wall-clock per question by question type. {#tbl-results-headline}
+
+Five observations are visible at headline level, before any subset
+breakdown:
+
+- **Gemma's recall is prompt-stable.** Citation recall is identical
+  to three decimal places under both v1 and v2 (0.598 / 0.598).
+  Precision differs marginally (0.524 / 0.520). The system can
+  therefore swap prompt versions without retraining downstream
+  reviewers on what the headline numbers mean.
+
+- **Qwen's recall moves substantially under v2.** The +0.159 jump
+  from v1 (0.386) to v2 (0.545) is what produced the family-axis
+  retraction discussed in Section 5. The N=70 sample reaffirms the
+  N=40 finding.
+
+- **All four cells achieve perfect refusal correctness.** Every
+  cell refuses every refusal-category question. The exact-phrase
+  detector is strict; partial refusals would have been counted as
+  failures. None occurred.
+
+- **Hallucination floor at zero is a Gemma property.** Both Gemma
+  cells produced zero hallucinated citations on the full sweep.
+  Qwen v1 produced 23; Qwen v2 reduced this by 16 to 7. The
+  qualitative difference — confabulation present at all vs absent
+  entirely — survives the prompt change.
+
+- **Latency is the cost of the Gemma default.** Mean answerable
+  latency is roughly 6.7× Qwen's; mean refusal latency is roughly
+  9.6×. The production-default choice (D015) accepts this trade-off
+  on the basis that underwriting-research workflows tolerate
+  20-second answers better than they tolerate hallucinated
+  citations.
+
+---
+
+## Subset Analysis: Where the Headline Comes From {#sec-results-subsets}
+
+The full-sample 0.598 is the mean of a strongly non-uniform
+distribution across question types. Decomposing by subset
+localises where the system works and where it does not. The
+decomposition is reported on `citation_recall` only, as it is
+the load-bearing axis for the project's headline claim.
+
+| Subset | n | Qwen × v1 | Qwen × v2 | Gemma × v1 | Gemma × v2 |
+|---|---|---|---|---|---|
+| `all_answerable` | 44 | 0.386 | 0.545 | 0.598 | 0.598 |
+| `excluding_retrieval_misses` | 33 | 0.515 | 0.727 | 0.798 | 0.798 |
+| `single_chunk` | 22 | 0.591 | 0.727 | 0.773 | 0.773 |
+| `single_chunk_retrievable` | 17 | 0.765 | 0.941 | 1.000 | 1.000 |
+| `multi_chunk` | 12 | 0.208 | 0.542 | 0.583 | 0.583 |
+| `within_document` | 34 | 0.456 | 0.662 | 0.706 | 0.706 |
+| `within_document_retrievable` | 27 | 0.574 | 0.833 | 0.889 | 0.889 |
+| `cross_document` | 10 | 0.150 | 0.150 | 0.233 | 0.233 |
+
+: Citation recall by subset. Every subset is a strict partition of
+`all_answerable` according to a stated property (chunk count,
+within- vs cross-document, retrieval succeeded). `_retrievable`
+subsets exclude the 11 questions where retrieval failed across all
+cells. {#tbl-results-subsets}
+
+Four readings of this table matter:
+
+### 1. Retrieval is the dominant bottleneck
+
+The headline goes from 0.598 (`all_answerable`) to 0.798
+(`excluding_retrieval_misses`) for the production-default cell —
+a +0.200 jump from excluding 11 questions where retrieval failed.
+The system's ceiling on the answerable subset where retrieval
+works is *roughly 80%*. The headline figure is dragged down by
+retrieval, not by the answer model.
+
+This is the most operationally important reading of the table.
+A reviewer asking "why is the headline only ~60%?" has the
+answer: 25% of answerable questions never gave the model the
+right chunks to cite.
+
+### 2. Single-chunk-retrievable is perfect for Gemma
+
+When retrieval succeeds *and* the question has a single gold
+chunk (n=17), both Gemma cells score **1.000** — every gold
+chunk cited, every time. Qwen v2 also climbs sharply, reaching
+0.941 in the same subset.
+
+This is the cleanest result in the table. On the question shape
+the system was primarily designed for — "one specific chunk, one
+specific citation, retrieval works" — production-default Gemma
+is at ceiling.
+
+### 3. Multi-chunk synthesis is harder, and concentrates the Qwen-Gemma gap
+
+The multi-chunk subset (n=12) shows the largest Qwen-Gemma gap
+under v2: 0.542 vs 0.583, a 4.1pp spread. Multi-chunk questions
+require the model to identify and cite multiple supporting
+chunks within the same document. Gemma is slightly more reliable
+at this; the gap is small but consistent.
+
+### 4. Cross-document is the system's clearest weakness
+
+The cross_document subset (n=10) is the worst-performing subset
+for every cell. The production-default Gemma × v2 reaches 0.233 —
+roughly one in four gold chunks cited. Qwen × v2 reaches 0.150.
+The qualitative finding from N=40 (Gemma leads on cross-document
+synthesis) survives at N=10. The quantitative finding is that
+even the leader is not usable on this question class.
+
+The governance document commits to the system not being relied
+on for cross-document synthesis as a primary use case. The
+N=10 cross-document data is what underwrites that commitment.
+
+---
+
+## Refusal Correctness {#sec-results-refusal}
+
+The refusal benchmark is 26 questions partitioned across three
+adversarial categories. Each cell's score is `correct / total`,
+where "correct" means the model emitted exactly the refusal
+phrase. Partial refusals (refusal phrase plus an answer) are
+counted as failures; none occurred.
+
+| Category | n | Qwen × v1 | Qwen × v2 | Gemma × v1 | Gemma × v2 |
+|---|---|---|---|---|---|
+| `refusal_out_of_corpus` | 10 | 10/10 | 10/10 | 10/10 | 10/10 |
+| `refusal_adjacent` | 10 | 10/10 | 10/10 | 10/10 | 10/10 |
+| `refusal_false_premise` | 6 | 6/6 | 6/6 | 6/6 | 6/6 |
+
+: Refusal correctness by category. The three categories are
+ordered by increasing subtlety: out-of-corpus questions are
+clearly off-topic; adjacent questions touch a topic the corpus
+discusses but ask for specifics the corpus does not contain;
+false-premise questions assume a fact not in the corpus.
+{#tbl-results-refusal}
+
+The headline result is **104 of 104 refusal cells correct across
+the sweep**. Every cell refuses every refusal-category question.
+The three sub-readings:
+
+- **The adjacent-but-unanswered category is the most operationally
+  important** and the most resistant to "looking refused but
+  actually answering." A model is most tempted to confabulate
+  when the topic is in scope but the specific demand is not. Every
+  cell handled all 10 adjacent questions correctly.
+- **The false-premise category is the smallest** (n=6) because the
+  benchmark author found it hardest to generate clean false-premise
+  questions that didn't overlap with the other categories. The
+  small n weakens the claim somewhat; future benchmark expansions
+  should increase this partition.
+- **No category-by-model interaction is visible.** Both models
+  pass both prompts on every category. The refusal contract is
+  fully honoured by both models tested.
+
+The strict exact-phrase detector is brittle by design (Section 4).
+A detector that allowed near-matches would have surfaced any
+ambiguity here; the strict detector did not, because no ambiguity
+existed.
+
+---
+
+## Hallucinated Citations {#sec-results-hallucinations}
+
+Hallucinated citations are `chunk_id`s the model emitted that
+were *not* in the retrieved context. They are qualitatively
+different from "wrong chunk cited" failures — the latter is
+choosing the wrong real chunk; the former is inventing a chunk
+that does not exist in the SOURCES block the model saw.
+
+| Cell | Hallucinated citations (over 44 answerable questions) |
+|---|---|
+| Qwen3.6-35B-A3B-4bit × v1 | 23 |
+| Qwen3.6-35B-A3B-4bit × v2 | 7 |
+| gemma-4-31B × v1 | 0 |
+| **gemma-4-31B × v2** | **0** |
+
+: Total hallucinated citations per cell. Numerator is across all
+44 answerable questions in the sweep; the denominator (citations
+emitted) varies per cell. {#tbl-results-hallucinations}
+
+The Gemma cells achieve zero hallucinations across the full
+sweep — the structural validator (Section 4) reports no
+`chunk_id` cited that was not in the retrieved context. This is
+the load-bearing safety property for the citation contract: an
+underwriter taking a Gemma-cell citation can trust that the
+chunk it points at was at least in the retrieved context, even
+before any check of whether the chunk actually supports the
+claim.
+
+The Qwen cells do hallucinate. Qwen × v1 produced 23
+hallucinations; Qwen × v2 reduced this to 7 — a roughly 3.3×
+drop. The reduction is substantial but the absolute number is
+non-zero. A
+deployment that chose Qwen for its 6× latency advantage would
+need to either: (a) accept that some citations point at chunks
+that were not in the retrieved set; (b) post-filter the model's
+output to strip hallucinated citations before display (which
+the structural validator already partitions for); or (c) use the
+hallucination count as a per-query signal to abstain or escalate.
+
+The Streamlit interface (Section 7) shows hallucinated citations
+as red `[?]` badges so the user cannot mistake a fabricated
+citation for a real one. This is the structural-validator output
+made visible.
+
+---
+
+## Latency {#sec-results-latency}
+
+Wall-clock per question, split by question type (answerable vs
+refusal), measured at `AnswerResult.elapsed_seconds`. Means and
+medians are both reported because the answerable distribution is
+right-skewed (a small number of long-cycle questions pull the
+mean up).
+
+| Cell | mean (ans) | median (ans) | mean (ref) | median (ref) |
+|---|---|---|---|---|
+| Qwen3.6-35B-A3B-4bit × v1 | 3.3 s | 3.0 s | 0.8 s | 0.6 s |
+| Qwen3.6-35B-A3B-4bit × v2 | 3.4 s | 3.2 s | 0.9 s | 0.7 s |
+| gemma-4-31B × v1 | 21.7 s | 19.9 s | 8.4 s | 8.0 s |
+| **gemma-4-31B × v2** | **22.9 s** | **21.1 s** | **8.6 s** | **8.3 s** |
+
+: Latency per cell by question type. {#tbl-results-latency}
+
+Three readings:
+
+- **Latency is a constant cost of the Gemma default.** The Gemma /
+  Qwen ratio is ~6.7× on answerable mean and ~9.6× on refusal
+  mean. The gap is consistent across prompts (v1 → v2 adds ~1
+  second on Gemma, negligible on Qwen).
+- **Refusal questions are faster than answerable questions** by
+  roughly 2.5× on Gemma and roughly 4× on Qwen. The refusal phrase
+  is shorter than a citation-rich answer; the model emits fewer
+  tokens. This is the expected behaviour and a sanity-check on
+  the temperature-0 generation pipeline.
+- **Wall-clock is dominated by tokens generated, not by retrieval.**
+  Retrieval contributes ~30–50 ms warm; the rest is in the LLM
+  call. Latency tuning would therefore work on the LLM stack
+  (faster model, smaller quantisation, speculative decoding),
+  not on the retrieval stack.
+
+For an underwriting-research workflow where the alternative is a
+human spending several minutes finding the same paragraph, a
+22-second answer is acceptable. For an interactive workflow, a
+deployment can override the production default to Qwen via the
+env variable and accept the higher hallucination floor.
+
+---
+
+## Retrieval Miss List {#sec-results-retrieval-miss}
+
+The 11 questions where `retrieval_recall = 0` across all four
+cells. These are the questions Q12 diagnosed (Section 5) — the
+gold chunks were not in any cell's top-5 regardless of model or
+prompt, because of query/chunk language asymmetry on single-vector
+dense pooling.
+
+| Question | Category | Note |
+|---|---|---|
+| `q001` | `single_chunk_pra_climate` | Scope chunk for SS5/25 — see Section 5, Q12 Probe 3 |
+| `q004` | `single_chunk_pra_climate` | Three-characteristics chunk for SS5/25 |
+| `q013` | `single_chunk_munich_re` | Munich Re thermal-coal — the diagnostic case |
+| `q042` | `cross_document` | Cross-document synthesis |
+| `q044` | `cross_document` | Cross-document synthesis |
+| `q046` | `cross_document` | Cross-document synthesis |
+| `q047` | `cross_document` | Cross-document synthesis |
+| `q051` | `multi_chunk_munich_re` | Multi-chunk within Munich Re |
+| `q053` | `multi_chunk_swiss_re` | Multi-chunk within Swiss Re |
+| `q055` | `single_chunk_pra_climate` | New SS5/25 question added at N=70 extension |
+| `q056` | `single_chunk_pra_climate` | New SS5/25 question added at N=70 extension |
+
+: The 11 retrieval-miss questions. The expansion from 3/26 (11.5%)
+at N=40 to 11/44 (25.0%) at N=70 reflects both the cross-document
+expansion (5 of the 11 are cross-document) and the addition of
+two further SS5/25 questions (q055, q056) at the extension.
+{#tbl-results-retrieval-miss}
+
+The retrieval miss list is the v2 work-stream's primary target
+(Q13 in `docs/open_questions.md`). Cross-document synthesis is
+five of the 11 misses — the multi-issuer retrieval problem
+*is* the cross-document problem in practice — so a v2 reranker
+or query-rewriting layer that addresses single-vector asymmetry
+should improve the cross_document subset substantially.
+
+---
+
+## A Per-Question Anomaly Worth Flagging {#sec-results-q058}
+
+One per-question result deserves a note because it does not fit
+the otherwise-monotone "v2 improves or preserves" pattern: **q058**,
+a single-chunk Swiss Re question.
+
+| Question | Category | Qwen × v1 | Qwen × v2 | Gemma × v1 | Gemma × v2 |
+|---|---|---|---|---|---|
+| `q058` | `single_chunk_swiss_re` | 1.00 | **0.00** | 1.00 | 1.00 |
+
+: q058 per-cell. Qwen × v2 regresses against v1 on a single
+question. {#tbl-results-q058}
+
+Qwen × v1 got q058 right; Qwen × v2 got it wrong. Both Gemma cells
+got it right. The v2 prompt change is therefore **not strictly
+monotone** for Qwen — it improves most cells but trades one
+known regression for the larger gains elsewhere.
+
+The +0.159 mean recall jump from Qwen v1 → v2 is the net of many
+per-question improvements minus this one regression. The trade is
+overwhelmingly favourable in aggregate, but a deployment selecting
+prompts on a per-query basis (not the current production posture)
+would note q058 as a small counterexample.
+
+No equivalent regression exists on the Gemma cells. Gemma's
+prompt robustness, observed at the aggregate level, holds at the
+per-question level too.
+
+---
+
+## What the Numbers Do Not Say {#sec-results-not-said}
+
+Three claims a reviewer might be tempted to draw from these
+numbers, and the reason each does not survive the data:
+
+- **"60% citation recall means 60% accuracy."** It does not. Citation
+  recall measures whether the model cited the chunks the benchmark
+  author designated as gold. It does not measure whether the
+  model's prose accurately reflects what those chunks say. A
+  perfectly-cited answer can be semantically wrong, and a
+  semantically-correct answer can cite the right chunks for the
+  wrong reasons. LLM-as-judge semantic correctness is recorded as
+  Q10.3 and deferred to v2.
+
+- **"100% refusal correctness on this benchmark means 100% refusal
+  correctness in production."** It does not. The benchmark is 26
+  hand-crafted refusal questions across three categories. A
+  production deployment will see adversarial cases the benchmark
+  does not cover — questions phrased to subvert the refusal
+  contract, questions in a different domain register, questions
+  where the user appears to authorise an answer the contract
+  should refuse. The 100% on this benchmark is necessary; it is
+  not sufficient.
+
+- **"The system is local-first because it runs on a Mac."** It is
+  local-first because *no pipeline stage requires a remote call*.
+  All retrieval is local Qdrant; all embedding is local MLX; all
+  generation is local oMLX. The Mac is the hardware; the
+  local-first property is the architectural commitment. A Linux
+  workstation with a comparable GPU would run the same pipeline
+  with model-loading changes only.
+
+---
+
+## Results at a Glance {#sec-results-glance}
+
+| | |
+|---|---|
+| **Sweep** | N=70 D014 extended sweep, 2026-06-18T15-32-07Z |
+| **Cells** | 280 (4 cells × 70 questions); 0 errored |
+| **Wall-clock** | 45.7 minutes |
+| **Production-default cell** | gemma-4-31B-it-MLX-6bit × prompt v2 |
+| **Production-default citation_recall** | 0.598 on all_answerable; **0.798** excluding retrieval misses; **1.000** on single_chunk_retrievable |
+| **Production-default refusal** | **26/26** (100%) across all three refusal categories |
+| **Production-default hallucinations** | **0** across the full sweep |
+| **Production-default latency** | 22.9 s mean answerable; 8.6 s mean refusal |
+| **Headline weakness** | cross_document subset: 0.233 on production default; 0.150 on Qwen v2 |
+| **Retrieval miss rate** | 11/44 (25%) — Q13 v2 work-stream |
+| **Notable per-question anomaly** | q058 — Qwen v2 regresses against v1 (1.00 → 0.00); Gemma robust |
+| **Where the headline comes from** | retrieval-stage failures dragging an otherwise-strong answer stack down to 0.598 from a 0.798 ceiling |

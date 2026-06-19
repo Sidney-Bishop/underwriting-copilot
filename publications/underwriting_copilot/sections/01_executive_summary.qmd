@@ -2,14 +2,334 @@
 title: "Executive Summary"
 ---
 
-::: {.callout-note}
-**The one-paragraph version of this project**, written for someone who will read
-this page and nothing else. Plain language, no jargon, no acronyms unexplained.
+
+::: {.callout-tip icon=false}
+## The One-Paragraph Version
+
+We built **Cedant**, a local-first cited-answer copilot for
+reinsurance underwriting research. Given a question and an
+indexed corpus of public regulatory and corporate documents (PRA,
+EIOPA, Munich Re, Swiss Re), Cedant retrieves the relevant
+document chunks using hybrid dense-and-sparse search, then asks a
+local language model to write an answer in which every factual
+claim is paired with a structural citation to a specific chunk.
+Citations are validated by set-membership against the retrieved
+context, hallucinated citations are partitioned out and surfaced
+explicitly, and out-of-corpus questions trigger an exact-phrase
+refusal rather than a fabricated answer. Cedant is a five-day
+interview artefact, not a production system; everything runs on a
+single laptop with no third-party API calls at any pipeline stage,
+including the evaluation. The 70-question hand-crafted benchmark
+is scored deterministically against gold chunk references —
+structurally, not by an LLM judge. **The contribution is less a
+product than a discipline: a small, locally reproducible RAG
+system in which the citation contract and the refusal contract are
+first-class, structurally enforced, and measured against
+pre-stated falsification criteria.**
 :::
 
-<!--
-prompt:
-  - In one sentence, what does this project do?
-  - Who is it for, and what problem does it solve for them?
-  - What's the headline finding or outcome a reader should walk away with?
--->
+---
+
+## The Problem {#sec-exec-problem}
+
+Reinsurance underwriting research is, in large part, document
+work. An underwriter assessing a property catastrophe risk, a
+casualty treaty, or an ESG exclusion will draw on regulatory
+supervisory statements, internal underwriting manuals, peer
+reinsurers' published sustainability reports, broker submissions,
+and modelling-firm white papers. The synthesis is manual,
+repetitive, and time-pressured.
+
+The core difficulty is not the volume of documents but the
+**citation discipline** the work demands. Underwriters cannot rely
+on a free-form summary of what some document "probably says" —
+they need to know exactly which paragraph of which supervisory
+statement supports a position, because that paragraph may need to
+be cited in an internal committee paper or a regulator
+submission. A tool that synthesises plausibly but cites loosely
+or hallucinates is worse than no tool: it shifts the verification
+burden onto the user under time pressure and creates a
+confident-sounding artefact that the user must now disprove.
+
+Three related concerns shape the design of any practical tool in
+this space:
+
+- **Data sensitivity.** Underwriting documents include internal
+  pricing rationale, broker submissions under non-disclosure, and
+  competitive intelligence. A system that sends queries or
+  retrieved chunks to a third-party API is, for many reinsurers,
+  a non-starter.
+
+- **Source verifiability.** A summary without a clearly-resolved
+  citation to a specific paragraph is not actionable. The system
+  must distinguish between *what the corpus says* and *what the
+  model thinks the corpus says*, and must refuse rather than
+  fabricate when the corpus does not contain the answer.
+
+- **Evaluation honesty.** A useful evaluation must include
+  out-of-corpus questions, must report hallucination counts
+  rather than smoothing them, and must be reproducible by a
+  reader who has not seen the eval pipeline.
+
+These three concerns — local execution, structural citation
+discipline, and an honest evaluation harness — are the design
+constraints from which Cedant follows.
+
+---
+
+## What We Built {#sec-exec-what}
+
+Cedant is a single-machine RAG pipeline whose architecture is
+intentionally small.
+
+```
+User question
+      │
+      ▼
+┌──────────────────────────┐
+│  Hybrid Retrieval        │  BGE-M3 dense embeddings + BM25 sparse,
+│  (Qdrant + custom BM25)  │  fused via Reciprocal Rank Fusion (k=60)
+└────────────┬─────────────┘
+             │ top-k chunks (default k=5)
+             ▼
+┌──────────────────────────┐
+│  Answer Generation       │  Local oMLX, OpenAI-compatible chat
+│  (Gemma 4 31B IT default)│  completions, temperature 0
+└────────────┬─────────────┘
+             │ answer text with [chunk_id] citations
+             ▼
+┌──────────────────────────┐
+│  Citation Validation     │  Regex extracts every [chunk_id];
+│  + Refusal Detector      │  set-membership check against retrieved
+│                          │  set; hallucinated citations partitioned
+│                          │  out; exact-phrase refusal detected
+└────────────┬─────────────┘
+             ▼
+   AnswerResult: cited answer  OR  refusal  +  source cards
+```
+
+**Retrieval.** The 461-chunk corpus is indexed twice: a dense
+BGE-M3 embedding index (1024-dim, CLS-pooled and L2-normalised
+per D010) in a local Qdrant store, and a sparse BM25 index over
+a Porter-stemmed corpus vocabulary (~4,810 terms per D011). At
+query time both retrievers run, and their results are fused via
+Reciprocal Rank Fusion (k=60) using Qdrant's native hybrid query
+API. Hybrid retrieval was chosen over pure dense or pure sparse
+because regulatory and corporate documents contain both rare
+named entities (specific paragraph numbers, regulation
+identifiers) where BM25 dominates, and free-form descriptive
+prose where dense embeddings dominate.
+
+**Answer generation.** The retrieved chunks are passed to a local
+language model served via oMLX on `http://127.0.0.1:8000/v1`.
+The production default is **Gemma 4 31B IT 6-bit MLX**, selected
+under D015 on the basis of the N=70 evaluation (hallucination
+floor at zero, citation recall identical under both prompt
+versions, small but consistent within-document advantage).
+Qwen3.6 35B-A3B 4-bit remains available as a latency-budget
+alternative (approximately 6.7× faster) via the
+`UNDERWRITING_COPILOT_MODEL` environment variable. Temperature is
+hard-pinned to 0.0; same query plus same corpus plus same model
+plus same prompt produces the same answer.
+
+**Citation validation.** A regular expression
+(`\[([A-Za-z0-9_\-]+)\]`) matches every `[chunk_id]` token in
+the model's output and checks each against the set of retrieved
+chunk identifiers. Citations that point at chunks not in the
+retrieved set are classified as **hallucinated citations** and
+surfaced explicitly in the user interface as red `[?]` badges,
+rather than silently allowed to mislead the reader. The
+partition into valid and hallucinated is structural; the
+detector cannot be tricked by reformatting.
+
+**Refusal contract.** When retrieval surfaces no relevant chunks,
+or when the model determines the retrieved chunks do not contain
+the answer, the system commits to emitting the exact phrase
+*"I cannot answer this from the provided sources."* The phrase
+is detected by strict string match (after stripping trailing
+whitespace and end-of-sentence punctuation). Partial refusals
+are rejected; the detector cannot be subverted by wrapping the
+refusal phrase around an unauthorised answer. When triggered,
+the answer card is replaced by a dedicated refusal card and the
+retrieved chunks (if any) are still shown so the user can verify
+the refusal was sound.
+
+**Analyst surface.** A local Streamlit application renders cited
+answers inline, with citations as green badges that link to
+source cards below. Hallucinated citations render in red.
+Sample-query exemplars demonstrate the canonical query shapes
+(single-document regulatory, single-document corporate,
+cross-document synthesis, out-of-corpus refusal). The same
+`Retriever` and `AnswerGenerator` objects that the Streamlit UI
+constructs are the ones the evaluation harness uses; behaviour
+observed in the UI is the behaviour the eval measures.
+
+---
+
+## Key Results {#sec-exec-results}
+
+::: {.callout-note}
+## Evaluation methodology
+
+Numbers below come from the canonical N=70 evaluation run at
+`eval/results/2026-06-18T15-32-07Z/` — 44 answerable + 26 refusal
+questions, scored across a 2×2 sweep of two models × two prompt
+versions (280 cells total). Scoring is **structural**: citation
+recall is the fraction of gold chunks the model cited; refusal
+correctness is exact-phrase match. There is no LLM-as-judge layer
+in the v1 eval (Q10.3, deferred to v2). The full sweep ran in
+45.7 minutes wall-clock with zero errored cells.
+:::
+
+### Production-default cell (Gemma 4 31B IT × prompt v2)
+
+| Metric | Value |
+|---|---|
+| Questions evaluated | 70 (44 answerable + 26 refusal) |
+| Mean citation recall, all answerable | **0.598** |
+| Mean citation recall, excluding retrieval misses | **0.798** |
+| Mean citation recall, single-chunk retrievable (n=17) | **1.000** |
+| Mean citation recall, cross-document (n=10) | 0.233 |
+| Refusal correctness | **26/26 (100%)** across all 3 categories |
+| Hallucinated citations across full answerable sweep | **0** |
+| Mean wall-clock, answerable | 22.9 s |
+| Mean wall-clock, refusal | 8.6 s |
+
+: Production-default cell headline numbers, N=70.
+{#tbl-exec-leaderboard}
+
+### Five qualitative findings the evaluation supports
+
+1. **The citation contract holds for the production-default
+   model.** Gemma × v2 produced zero hallucinated citations across
+   the 44-question answerable sweep. Every emitted `[chunk_id]`
+   resolves to a chunk that was in the retrieved context.
+   Qwen × v2 produced 7 hallucinations across the same sweep
+   (down from 23 under v1, a 3.3× reduction under the better
+   prompt). The structural validator partitions both fairly; the
+   choice between models is therefore explicit on the
+   hallucination axis.
+
+2. **The refusal contract holds for both models.** Every cell of
+   the sweep refuses every question in the 26-question refusal
+   benchmark — 104 of 104 refusal-cell outcomes correct, across
+   three adversarial categories (out-of-corpus, adjacent-but-
+   unanswered, false-premise). No partial refusals occurred. The
+   strict exact-phrase detector did not need to fall back on
+   tolerance.
+
+3. **The system's weakness is upstream of the language model.**
+   25% of answerable questions (11 of 44) fail at the retrieval
+   stage across all four cells — the gold chunks were never in
+   the top-5, regardless of model or prompt. Q12 traced the root
+   cause to query/chunk language asymmetry on single-vector dense
+   embeddings; remediation paths (HyDE, cross-encoder reranker,
+   BGE-M3 multi-vector) are deferred to v2 as Q13. The 0.798
+   `excluding_retrieval_misses` number is the answer-stage
+   ceiling; the 0.598 headline is what retrieval drags it down to.
+
+4. **Cross-document synthesis is the system's clearest weakness.**
+   The cross_document subset (n=10) scores below 0.25 mean
+   citation_recall in every cell, including the production
+   default at 0.233. `docs/governance.md` commits to the system
+   not being relied on for cross-document synthesis as a primary
+   use case. The N=10 cross-document subset is what underwrites
+   that commitment.
+
+5. **Two claims have been retracted on the record.** A Day-2
+   family-axis citation-discipline claim retracted after the N=40
+   D014 sweep showed Qwen v2 closed the gap to Gemma to within
+   3.2 percentage points (against a pre-stated 10pp threshold).
+   A Day-4 within-document parity claim weakened (not retracted)
+   when the N=70 extension showed a small but consistent ~5pp
+   Gemma advantage that the N=40 partition had not surfaced.
+   Both retractions are recorded in `docs/journal.md` by
+   timestamp and commit hash, append-only. The discipline of
+   pre-stating the criterion and retracting when the evidence
+   demanded it is part of the artefact, not a footnote to it.
+
+---
+
+## What This Is Not {#sec-exec-not}
+
+Cedant is a **five-day interview artefact**, not a production
+system. The following limitations are constitutive, not bugs.
+
+- **The corpus is small and curated.** Six PDFs from four issuers
+  (PRA × 3 supervisory statements, EIOPA × 1, Munich Re × 1,
+  Swiss Re × 1), 461 chunks after preprocessing. Three synthetic
+  Sycamore Reinsurance documents are drafted to demonstrate the
+  pipeline structurally extends to internal-category content, but
+  are **not indexed in v1**; the eval numbers are reported
+  against the 4-issuer real corpus only. Performance on this
+  corpus does not predict performance on a production-scale
+  underwriting document store.
+
+- **Evaluation is structural, not semantic.** The eval measures
+  whether the model cited the chunks the benchmark author
+  designated as gold. It does **not** measure whether the
+  model's prose accurately reflects what those chunks say. An
+  LLM-as-judge semantic-correctness layer is recorded as Q10.3
+  and deferred to v2. Until that lands, headline citation recall
+  should be read as a structural proxy for semantic correctness,
+  not as semantic correctness itself.
+
+- **Single-seed runs; no variance estimates.** Each cell of the
+  sweep is one run. The qualitative findings are robust to any
+  plausible single-seed variance, but precise digits past the
+  first decimal should be read with that caveat. Multi-seed
+  variance is recorded as v2 Priority 3.
+
+- **No adversarial corpus or red-team eval.** The 26-question
+  refusal benchmark covers out-of-corpus, adjacent-but-
+  unanswered, and false-premise questions, but does not include
+  prompt-injection attacks, jailbreaks, or adversarially-
+  rephrased questions designed to defeat the citation contract.
+
+- **No real underwriter has used it.** The Streamlit interface
+  has not been tested in a real underwriting workflow. The
+  sample-query exemplars exist precisely because the interface
+  has not yet been exercised against the variability of real
+  analyst queries.
+
+- **Not validated against legal or compliance requirements.**
+  Cedant retrieves and cites public documents; it does not
+  constitute legal, regulatory, or underwriting advice and has
+  not been reviewed by compliance.
+
+::: {.callout-warning}
+## Production Readiness
+Cedant is a research artefact built in five days. It should not
+be used for live underwriting decisions, regulatory submissions,
+or any work product where citation correctness has external
+consequences.
+:::
+
+---
+
+## Project at a Glance {#sec-exec-glance}
+
+| | |
+|---|---|
+| **Domain** | Reinsurance underwriting research |
+| **Indexed corpus** | 6 PDFs from 4 issuers (PRA × 3, EIOPA × 1, Munich Re × 1, Swiss Re × 1); 15.3 MB; 461 chunks |
+| **Synthetic carve-out** | 3 Sycamore Reinsurance documents drafted, not indexed in v1 |
+| **Retrieval** | Hybrid BGE-M3 dense (CLS+L2-normalised) + BM25 sparse (Porter-stemmed, ~4,810 terms), fused via RRF k=60; top_k=5 |
+| **Vector store** | Local Qdrant (filesystem-backed) |
+| **Generation** | Local oMLX, OpenAI-compatible chat completions; temperature 0.0; production default Gemma 4 31B IT 6-bit MLX (D015) |
+| **Alternate model** | Qwen3.6 35B-A3B 4-bit, overridable via `UNDERWRITING_COPILOT_MODEL` env var |
+| **Citation contract** | `[chunk_id]` regex, set-membership against retrieved set; hallucinated citations partitioned out and surfaced |
+| **Refusal contract** | Exact-phrase match: *"I cannot answer this from the provided sources."* Partial refusals rejected |
+| **Analyst surface** | Local Streamlit application; green citation badges; red `[?]` for hallucinated citations; source cards; dedicated refusal card |
+| **Evaluation** | N=70 hand-crafted benchmark (44 answerable + 26 refusal); 2×2 sweep (models × prompts); structural scoring; deterministic report regeneration |
+| **Production-default headline** | 0.598 citation_recall all-answerable; 0.798 excluding retrieval misses; 1.000 on single-chunk-retrievable; **26/26** refusal; **0** hallucinations |
+| **Headline weakness** | Cross-document subset: 0.233 on production default; retrieval miss rate 25% (Q13 v2 work-stream) |
+| **Latency** | Gemma 22.9 s answerable / 8.6 s refusal · Qwen 3.4 s / 0.9 s |
+| **Determinism** | Same software state → same `raw.jsonl` and `report.md` to the bit |
+| **Reproducibility** | Two canonical eval runs committed (`eval/results/2026-06-18T*Z/`); regenerable via `uv run python -m eval.runner` and `uv run python -m eval.report` |
+| **Hardware** | MacBook Pro M5 Max, 128 GB unified memory |
+| **Codebase** | Python 3.14, Streamlit, Qdrant, oMLX, `uv` for packaging |
+| **Tests** | 177+ unit and integration tests (158+ pipeline, 19 Streamlit AppTest) |
+| **Build window** | Five days, end-to-end |
+| **Retractions on record** | 2 — family-axis citation discipline (N=40); within-document parity (N=70 weakening) |
+| **Scope** | Interview artefact / proof of concept · not a production system |

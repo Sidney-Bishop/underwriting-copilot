@@ -1,17 +1,549 @@
 ---
-title: "Approach"
+title: "Methodology"
 ---
 
-::: {.callout-tip}
-**How this project tackles the problem.** Walk a reader through the approach
-without burying them in implementation detail — pipeline.qmd is the place
-for that.
+
+::: {.callout-note icon=false}
+## Plain-Language Summary
+
+This section describes the system end-to-end: how a question becomes
+a set of retrieved document chunks, how those chunks become a cited
+answer, and how the citations and the refusal are checked before
+either is shown to the user. Two design decisions are central. First,
+the system uses **two** retrieval methods at once (one based on the
+meaning of words, one based on the exact words used) and combines
+their results, because each method handles a kind of query the other
+handles poorly. Second, the system enforces its citation and refusal
+*contracts* in code — they are not relied on as instructions the
+language model is asked to follow. A reader who only wants the
+architectural picture can read the *Pipeline Overview* sub-section
+below and skip the rest.
 :::
 
-<!--
-prompt:
-  - What's the overall approach in two or three sentences?
-  - What alternatives did you consider, and why did you go with this one?
-  - What assumptions does the approach rely on?
-  - What's the simplest mental model a reader could carry of how this works?
--->
+---
+
+## Pipeline Overview {#sec-method-overview}
+
+Cedant is a six-stage pipeline whose stages are intentionally
+decoupled. Each stage has a single responsibility, lives in its own
+module, and is independently testable. The stages are:
+
+```
+       ┌──────────────────────────────────────────────────────────┐
+       │                                                          │
+       │   USER QUESTION                                          │
+       │        │                                                 │
+       │        ▼                                                 │
+       │  ┌─────────────────┐                                     │
+       │  │ Hybrid          │  Dense (BGE-M3) + Sparse (BM25)     │
+       │  │ Retrieval       │  fused via Reciprocal Rank Fusion   │
+       │  │                 │  in Qdrant. Top-k = 5 by default.   │
+       │  └────────┬────────┘                                     │
+       │           │                                              │
+       │           ▼                                              │
+       │  ┌─────────────────┐                                     │
+       │  │ Prompt          │  System prompt (frozen v2) +        │
+       │  │ Assembly        │  retrieved SOURCES block +          │
+       │  │                 │  user QUESTION.                     │
+       │  └────────┬────────┘                                     │
+       │           │                                              │
+       │           ▼                                              │
+       │  ┌─────────────────┐                                     │
+       │  │ LLM Call        │  Local oMLX, OpenAI-compatible      │
+       │  │ (temperature=0) │  chat-completions. Default          │
+       │  │                 │  Gemma 4 31B IT (D015).             │
+       │  └────────┬────────┘                                     │
+       │           │                                              │
+       │           ▼                                              │
+       │  ┌─────────────────┐                                     │
+       │  │ Citation        │  Regex-extract every [chunk_id];    │
+       │  │ Validation      │  partition into valid /             │
+       │  │                 │  hallucinated against retrieved set.│
+       │  └────────┬────────┘                                     │
+       │           │                                              │
+       │           ▼                                              │
+       │  ┌─────────────────┐                                     │
+       │  │ Refusal         │  Exact-phrase strict match;         │
+       │  │ Detector        │  partial refusals rejected.         │
+       │  └────────┬────────┘                                     │
+       │           │                                              │
+       │           ▼                                              │
+       │  ┌─────────────────┐                                     │
+       │  │ AnswerResult    │  Structured object: answer text,    │
+       │  │                 │  citations[], hallucinated[],       │
+       │  │                 │  used_chunks[], refused, elapsed.   │
+       │  └─────────────────┘                                     │
+       │                                                          │
+       └──────────────────────────────────────────────────────────┘
+```
+
+Each stage is described in detail below. The two contracts (citation
+and refusal) are validated after the LLM call, not relied on as
+prompt instructions; if the LLM ignores the prompt, the contract
+detectors still fire correctly.
+
+---
+
+## Hybrid Retrieval {#sec-method-retrieval}
+
+The retrieval layer was committed as D009 after a Day-2 path-selection
+review. Two channels run in parallel against the indexed corpus, and
+their results are fused at the storage layer.
+
+### Why hybrid, not dense alone
+
+Three properties of the corpus make pure-dense retrieval an
+incomplete answer:
+
+- **Named entities matter for citation.** Specific regulation
+  identifiers (`SS5/25`, `EIOPA-BoS-14/253`), paragraph numbers
+  ("4.124"), and defined terms (`ORSA`, `ICAAP`) carry semantic
+  weight that dense embeddings often dilute against surrounding
+  prose. BM25 surfaces these by exact match.
+
+- **Free-form descriptive prose dominates the rest.** Most of each
+  document is descriptive language where dense embeddings'
+  generalisation strength is the right tool. BM25 alone would miss
+  paraphrased queries.
+
+- **The two failure modes are different and complementary.** A dense
+  miss is typically a vocabulary mismatch ("greenhouse gas exposures"
+  vs "GHG"); a sparse miss is typically a topic-shift query
+  ("guidance on third-party providers" should match SS1/21 even if
+  it uses different terminology). Fusion mitigates both.
+
+A pure-dense baseline was the obvious alternative; it was rejected on
+Day-2 evidence after a hand-trial of three queries failed on
+named-entity recall.
+
+### Dense channel: BGE-M3 via mlx-embeddings (D009 + D010)
+
+The dense channel uses `BAAI/bge-m3` (1024-dimensional embeddings),
+served locally on Apple Silicon via `mlx-embeddings`. The choice of
+BGE-M3 reflects its strong domain coverage on regulatory English and
+its widespread use as a hybrid-retrieval baseline; the choice of MLX
+over PyTorch reflects the project's local-first / Apple-Silicon-
+native posture established by D004 and reinforced throughout the
+stack.
+
+A specific pooling decision was committed as **D010**: dense
+embeddings use the **CLS token output, L2-normalised**, not the
+`text_embeds` mean-pooled convenience output. The `mlx-embeddings`
+library's default `text_embeds` is mean-pooled across all token
+positions; BGE-M3 was trained with CLS-pooled representations, and
+using the default produces representations that are systematically
+off-distribution from the model's intended use. D010 was prompted by
+a Day-2 retrieval failure on a query that should have hit; the fix
+was a one-line change but the diagnostic that found it is recorded
+in the decision log.
+
+### What was rejected from BGE-M3's full feature set
+
+BGE-M3 produces three vector types from a single forward pass: dense,
+learned sparse, and ColBERT (late-interaction multi-vector). The
+canonical implementation is `FlagEmbedding`, which runs on PyTorch.
+
+The full multi-functionality was **not** used at v1, for two reasons:
+
+- The `mlx-embeddings` and `mlx-embedding-models` packages load
+  BGE-M3 as a standard XLM-RoBERTa encoder. The sparse linear+ReLU
+  head and ColBERT projection head are model-specific layers not
+  implemented in either MLX package. Going via MLX therefore means
+  **dense-only**.
+- The alternatives — running BGE-M3 under PyTorch via FlagEmbedding,
+  or under ONNX — both break the MLX-everywhere stack and add
+  dependency surface that is hard to justify against a five-day
+  budget.
+
+BM25 substitutes for BGE-M3's learned sparse head. At a 461-chunk
+corpus, the expected quality gap between BGE-M3's trained sparse
+weights and Porter-stemmed BM25 is small; D009 explicitly accepts
+this trade-off. ColBERT-style late-interaction reranking is recorded
+as a v2 option under **Q7**, to be revisited if the v1 evaluation
+reveals retrieval ceiling effects that the v1 channels cannot
+address. (The N=70 results in Section 6 show that retrieval *is*
+the dominant bottleneck — 25% of answerable questions fail at the
+retrieval stage — so Q7 is a real v2 candidate, not a placeholder.)
+
+### Sparse channel: BM25 with Porter stemming (D011)
+
+The sparse channel is **BM25** over a custom corpus-wide vocabulary,
+committed as D011. The specific design choices:
+
+- **Word-level tokenisation.** Subword tokenisation (WordPiece, BPE)
+  was considered and rejected because BM25's scoring relies on
+  meaningful term frequencies; subword splits produce fragment
+  statistics that don't represent the underlying terminology.
+- **Porter stemming.** Standard rule-based suffix-stripping. Maps
+  "regulation" / "regulations" / "regulatory" to a shared stem,
+  improving recall on inflected variants without requiring a
+  trained morphological model.
+- **Minimal stopwords.** A small set of high-frequency function
+  words (the, a, of, in, ...) is filtered. Domain-specific
+  near-stopwords are preserved because in regulatory text they
+  often carry meaning (e.g. "shall" vs "may" vs "should").
+- **Corpus-wide vocabulary.** Vocabulary is computed once at index
+  time over the full corpus and persisted at
+  `corpus/bm25_vocab.json` (~4,810 terms). Query-time tokenisation
+  uses the same vocabulary; out-of-vocabulary query terms are
+  silently dropped (the BM25 score for an OOV term is zero by
+  construction).
+- **BM25 parameters.** `k1 = 1.5`, `b = 0.75` — the rank-bm25
+  defaults. Tuning was deferred until the eval suggested a
+  tuning-specific failure mode; N=70 results do not show one.
+
+### Indexing: Qdrant native sparse vectors (D012)
+
+Both channels are indexed in a single Qdrant collection at
+`scratch/qdrant/`, with the dense vector stored as the primary
+1024-dim vector and the sparse vector stored as Qdrant's native
+sparse-vector type (`(indices[], values[])` pairs). Qdrant has
+supported sparse vectors as a first-class type since v1.7, which
+allows the hybrid query to run server-side rather than requiring
+client-side fusion against two separate stores.
+
+The decision to use one storage system rather than two (Qdrant for
+dense, an external BM25 store like Lucene for sparse) was D012, on
+the basis that one operational concern is simpler than two for a
+local-first artefact, and that Qdrant's sparse-vector support is
+mature enough that the abstraction does not leak.
+
+The full corpus payload (every chunk's text plus its hand-curated
+metadata) is stored in the Qdrant point payload, so a retrieval
+result is fully self-describing — there is no secondary store the
+retriever has to consult to materialise the chunk text or its
+provenance.
+
+### Fusion: Reciprocal Rank Fusion (RRF)
+
+The dense and sparse rankings are fused by **Reciprocal Rank
+Fusion** at query time, via Qdrant's hybrid-query API. The fusion
+formula is the standard:
+
+$$
+\text{RRF}(d) = \sum_{c \in \text{channels}} \frac{1}{k + r_c(d)}
+$$
+
+where $r_c(d)$ is the rank of document $d$ in channel $c$'s ranking,
+and $k$ is a fusion constant. The system uses $k = 60$ (the
+widely-cited Cormack et al. value) and pulls up to 50 candidates per
+channel before fusion.
+
+RRF was chosen over weighted score fusion because the two channels'
+raw scores are on incomparable scales (cosine similarity for dense;
+unbounded BM25 score for sparse); rank-based fusion sidesteps
+score-normalisation entirely. The cost is that absolute confidence
+information is lost — the fused score is a rank-derived value, not
+a calibrated probability. The system does not currently expose
+calibrated retrieval confidence to the answer model; Q3 in
+`docs/open_questions.md` records the deferral.
+
+### Filters applied at retrieval time
+
+Two filters are applied to the retrieval candidate pool before
+fusion:
+
+- **`exclude_superseded`** (default: `True`) — drops chunks belonging
+  to documents whose `superseded_by` field is non-null. In v1 this
+  removes PRA SS3/19 chunks whenever its successor SS5/25 is
+  available. Per D012, the default is on; users who specifically
+  need the older perspective can override.
+- **`issuer_type` / `jurisdiction`** (optional) — pass-through
+  filters into Qdrant payload matching. The Streamlit interface
+  exposes both as text inputs; the CLI exposes them as flags.
+
+---
+
+## Prompt Assembly and the LLM Call {#sec-method-llm}
+
+The retrieved top-k chunks (default $k=5$) are assembled into a
+SOURCES block and concatenated with the system prompt and the user
+question. The LLM call is a standard OpenAI-compatible chat
+completion against a local endpoint at `http://127.0.0.1:8000/v1`,
+served by oMLX. Temperature is hard-pinned to **0.0** in
+`_build_payload`, making the system deterministic for a given
+(query, corpus, model, prompt) tuple.
+
+### The production system prompt (v2)
+
+The full production system prompt, frozen as the v2 version after
+D014 and promoted to production by D015, lives at the top of
+`src/underwriting_copilot/answer.py`:
+
+```text
+You are an underwriting copilot for a reinsurance company. You
+answer questions about regulatory and corporate documents using
+ONLY the sources provided in the user message. You never use
+information from your training data.
+
+Citation format:
+- Every factual claim in your answer MUST be followed by a
+  citation in square brackets containing the source's actual chunk
+  identifier. Write the identifier verbatim from the SOURCES
+  section, with NOTHING else inside the brackets — no prefix, no
+  equals sign, no quotes, no abbreviation.
+- Worked example: if the SOURCES section lists a source as
+  [pra_ss5-25_climate__0027__role-of-scenario-analysis], cite a
+  claim from it as [pra_ss5-25_climate__0027__role-of-scenario-analysis],
+  not as [chunk_id=pra_ss5-25_climate__0027__role-of-scenario-analysis]
+  and not as [chunk_id_1] or [source_1]. The brackets contain the
+  verbatim identifier and nothing else.
+- A single sentence may carry multiple citations back-to-back:
+  [<first_identifier>][<second_identifier>].
+- Use only identifiers that appear verbatim in the SOURCES
+  section. Never invent an identifier.
+
+Refusal rule:
+- If the SOURCES do not contain enough information to answer the
+  QUESTION, respond with EXACTLY this phrase and nothing else:
+
+  I cannot answer this from the provided sources.
+
+Keep answers concise. Quote source text only when exact wording
+matters.
+```
+
+Three structural choices in this prompt deserve highlighting:
+
+- **The `<ID>` worked example is load-bearing.** The Day-2
+  observation that gave the system its sample query bank was a
+  Qwen-vs-Gemma citation-format gap: under v1 of this prompt (which
+  used the literal token `[chunk_id]` as both the placeholder name
+  and the emit format), Qwen tended to drift to placeholders like
+  `[chunk_id_1]` instead of substituting the actual identifier.
+  The v2 prompt resolves the ambiguity by using the actual chunk-id
+  format inside the worked example. The N=70 sweep shows the v2
+  prompt closes most of the Qwen gap (Section 6).
+- **"Use only identifiers that appear verbatim in the SOURCES
+  section. Never invent an identifier."** This is the
+  prompt-level statement of the citation contract. It is not relied
+  on as the enforcement mechanism — the validator (below) catches
+  fabricated identifiers regardless of whether the model honoured
+  the instruction — but stating it explicitly reduces the rate at
+  which models attempt to fabricate.
+- **The refusal phrase appears verbatim in the prompt.** The
+  detector matches on the same exact phrase. The prompt and the
+  detector are one contract; changing either requires changing the
+  other.
+
+### Model selection: Gemma 4 31B IT (D015)
+
+The production default is **`gemma-4-31B-it-MLX-6bit`**, selected
+under D015 on the basis of the D014 evaluation, and strengthened by
+the extended N=70 sweep. The specific properties that drove the
+choice:
+
+- **Citation discipline.** Gemma produces zero hallucinated citations
+  across the full 88-cell answerable sweep (44 questions × 2
+  prompts × Gemma). Qwen produces some on both prompts (23 on v1,
+  7 on v2). Quantitatively small, qualitatively a behaviour
+  difference.
+- **Robustness to the prompt change.** Gemma's citation recall is
+  identical under v1 and v2 (0.598 on both). Qwen's recall moves
+  substantially (0.386 → 0.545). A model that is not prompt-fragile
+  is preferred when the long-term maintainer of the system may not
+  be the engineer who designed the prompt.
+- **Refusal correctness.** Both models pass all 26 refusal questions
+  across both prompts (104/104 cells correct). On this axis the
+  choice is a wash.
+
+The trade-off is **latency**. Gemma's mean answerable-query latency
+is ~22 s; Qwen's is ~3 s. The slower latency is acceptable for
+underwriting-research workflows (where the alternative is a human
+spending several minutes finding the same paragraph), but a
+deployment with stricter latency budgets can override the default
+via the `UNDERWRITING_COPILOT_MODEL` environment variable.
+
+### Twelve-factor model resolution
+
+Model name resolution follows the twelve-factor precedence
+*explicit > environment > hardcoded default*, in
+`_resolve_model()`:
+
+```python
+def _resolve_model(explicit: str | None) -> str:
+    if explicit is not None:
+        return explicit
+    from_env = os.environ.get(MODEL_ENV_VAR)
+    if from_env:
+        return from_env
+    return DEFAULT_MODEL
+```
+
+Resolution is performed at constructor call time, not at module
+import time, so the evaluation harness can set the environment
+variable mid-process to sweep across models without reloading
+modules. This is a small detail but it has implications for how the
+eval harness is shaped (Section 5).
+
+---
+
+## The Citation Contract {#sec-method-citation}
+
+The citation contract was committed as part of D013. It comprises
+three components: a format, a parser, and a validator.
+
+### Format
+
+Every cited claim is followed by `[chunk_id]` — square brackets
+containing the verbatim chunk identifier. The format was chosen for
+three reasons: it is simple, it is regex-parseable, and the bracketed
+form is unlikely to appear naturally in regulatory text (which
+mostly uses parenthetical citations or footnote references).
+Alternative forms (`{chunk_id}`, `<cite>...</cite>`, HTML tags) add
+parsing complexity without quality benefit.
+
+### Parser
+
+A single regular expression in `src/underwriting_copilot/answer.py`
+identifies every citation:
+
+```python
+CITATION_REGEX = re.compile(r"\[([A-Za-z0-9_\-]+)\]")
+```
+
+The character class `[A-Za-z0-9_\-]` is **strict** — it does not
+match spaces, dots, or punctuation. This is deliberate: a naturally-
+occurring bracketed phrase in regulatory text like "[Article 12]"
+contains a space and a digit, and is therefore not matched. The
+parser cannot be tricked into treating prose as a citation.
+
+### Validator: hallucinated-citation detection
+
+After parsing, every extracted `chunk_id` is checked against the
+set of chunks that were actually included in the retrieval context:
+
+```python
+retrieved_ids = {h.payload["chunk_id"] for h in used_chunks}
+cited_ids = set(citation_regex.findall(answer))
+hallucinated = cited_ids - retrieved_ids
+valid = cited_ids & retrieved_ids
+```
+
+Citations that are not in the retrieved set are partitioned into the
+`hallucinated_citations` field on the `AnswerResult` and surfaced
+explicitly in the UI (as red `[?]` badges in the Streamlit
+interface) and in the eval reports. A reviewer cannot mistake a
+fabricated citation for a real one — it is structurally labelled as
+such at every surface.
+
+This is the load-bearing guardrail against confabulation. Even a
+perfectly-formatted citation is worthless if the chunk it points at
+was never in the context the model saw, and the structural check is
+cheaper than any other validation strategy. It runs in O(citations)
+per answer with one set-membership test per citation.
+
+---
+
+## The Refusal Contract {#sec-method-refusal}
+
+The refusal contract is structurally separate from, but
+philosophically paired with, the citation contract. Citation
+validation catches confabulation when the model *does* answer;
+refusal detection catches confabulation when the model *should
+not* answer at all.
+
+### The exact phrase
+
+When retrieval surfaces no relevant chunks (or when the model itself
+determines the retrieved chunks do not contain the answer), the
+system commits to emitting the exact phrase:
+
+```
+I cannot answer this from the provided sources.
+```
+
+The phrase is **strict-string-matched** against the model's output
+after stripping trailing whitespace and end-of-sentence punctuation
+(`.`, `!`, `?`). The detector rejects partial refusals — answers
+that contain the phrase as a clause but also include other content
+("I cannot answer this from the provided sources, but it's commonly
+known that…"). These are caught and treated as non-refusals, on the
+basis that a partial refusal is worse than no refusal — it gives the
+user the impression the system has declined, while still smuggling
+in an uncontrolled answer.
+
+### Why exact-match, not semantic similarity
+
+Fuzzy refusal detection (e.g. embedding the model's response and
+checking semantic similarity against "I don't know") is more robust
+to phrasing drift but introduces ambiguity. Exact-match makes the
+detector deterministic and the eval harness's refusal-correctness
+metric a clean Boolean. The cost is fragility — the LLM must
+produce the exact phrase, and a model with sloppy instruction-
+following will fail the contract.
+
+The N=70 sweep shows both candidate models (Gemma and Qwen) honour
+the exact-phrase contract in 100% of cases across both prompt
+versions. The brittleness is a real cost but not, on this corpus
+and these models, a manifest failure mode.
+
+### The refusal is a structured outcome, not an error
+
+`AnswerResult.refused` is a Boolean. When `True`, the
+`render_answer_with_badges` path in the UI is replaced by a
+dedicated refusal card with a "REFUSAL" label and a brief
+explanation of what triggered the refusal (no chunks retrieved, or
+chunks retrieved but the model determined them insufficient). The
+retrieved chunks (if any) are still shown below the refusal so the
+user can verify the decision was sound. This makes refusal a
+**first-class outcome**, not a fallback error case.
+
+---
+
+## What Was Deliberately Left Out {#sec-method-deferred}
+
+Three categories of methodology decision were considered and
+deferred. They are noted explicitly because deferred decisions are
+themselves design decisions:
+
+- **Calibrated retrieval confidence.** The system does not combine
+  the four available signals (RRF rank, citation coverage, model
+  self-assessment, prompt-fit confidence) into a single confidence
+  score. Q3 in `docs/open_questions.md` records both the option and
+  the explicit deferral, on the basis that collapsing the four
+  signals to one would be misleading at the v1 stage. Each signal
+  is reported separately.
+
+- **Cross-encoder reranker.** A second-stage re-ranking pass over
+  the fused top-k chunks could plausibly close some of the
+  retrieval miss rate observed in the N=70 results. Recorded as
+  one of three v2 options under Q13. Not built in v1 because the
+  Day-4 diagnostic localised the retrieval gap to single-vector
+  dense pooling rather than to fusion noise, which a reranker
+  would not address.
+
+- **LLM query rewriting (HyDE-style expansion).** A pre-retrieval
+  pass that rewrites or expands the user query before embedding
+  could help with the vocabulary-mismatch failures on the
+  retrieval miss diagnostic. Also under Q13. Not built in v1 for
+  budget reasons; high on the v2 list because it directly targets
+  the diagnosed root cause.
+
+The full v2 work-stream is recorded in `docs/open_questions.md`
+(Q7, Q13) and surfaces again in Section 8 of this report.
+
+---
+
+## Methodology at a Glance {#sec-method-glance}
+
+| | |
+|---|---|
+| **Pipeline shape** | 6-stage: retrieve → assemble prompt → LLM → parse citations → detect refusal → return AnswerResult |
+| **Retrieval** | Hybrid: BGE-M3 dense + BM25 sparse, fused by RRF (k=60) in Qdrant |
+| **Dense embedding** | BGE-M3 1024-dim, CLS-pooled, L2-normalised, via `mlx-embeddings` (D009 + D010) |
+| **Sparse retrieval** | BM25 (k1=1.5, b=0.75), word-level Porter-stemmed, ~4,810-term vocab (D011) |
+| **Fusion** | Qdrant-native hybrid query, candidates_per_channel = 50, k = 60 |
+| **Default top-k** | 5 chunks to the LLM |
+| **Filters** | `exclude_superseded` (default True, D012); optional `issuer_type` / `jurisdiction` |
+| **LLM endpoint** | `http://127.0.0.1:8000/v1`, oMLX, OpenAI-compatible chat completions |
+| **Production model** | `gemma-4-31B-it-MLX-6bit` (D015), overridable via `UNDERWRITING_COPILOT_MODEL` |
+| **Temperature** | 0.0, hard-pinned in `_build_payload` |
+| **System prompt** | v2 (frozen post-D014); promoted to production by D015 |
+| **Citation format** | `[chunk_id]`, regex `\[([A-Za-z0-9_\-]+)\]` |
+| **Citation guardrail** | Set-membership check against retrieved chunk_ids; hallucinated citations partitioned into a separate field |
+| **Refusal phrase** | "I cannot answer this from the provided sources." — exact strict-string match |
+| **Determinism** | Same (query, corpus, model, prompt) → same answer (temperature 0, fixed seeds where models support them) |
+| **Streaming** | Not in scope at v1 (single-shot completions only) |
+| **Multi-turn** | Not in scope at v1 (each call is independent) |
+| **Architectural decisions** | D003 (corpus), D004 (Docling), D006 (metadata), D008 (chunking), D009 (retrieval), D010 (pooling), D011 (BM25), D012 (index), D013 (answer contracts), D014 (eval), D015 (production model) |

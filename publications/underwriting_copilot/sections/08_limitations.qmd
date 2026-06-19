@@ -1,21 +1,423 @@
 ---
-title: "Limitations"
+title: "Limitations and Future Work"
 ---
 
-::: {.callout-warning}
-**Where this work falls short and what you should NOT trust it for.** Being
-candid here is what earns the rest of the document its credibility — a reader
-who sees this section take its own work seriously is more likely to trust
-everything else.
+
+::: {.callout-warning icon=false}
+## Plain-Language Summary
+
+This is the section a careful reader will read first. The system has a
+real, diagnosed retrieval-stage ceiling that caps the headline at
+roughly 60%, against a much higher ceiling on questions where
+retrieval succeeds. It is not built for cross-document synthesis — the
+strongest cell scores 0.233 on that subset. The evaluation uses
+structural proxies for citation correctness, not semantic
+correctness; "perfect citations" can coexist with prose that
+misrepresents what the cited chunks say. The benchmark is small
+(70 questions) and hand-crafted, which gives it diagnostic power
+but limits its statistical authority. Two claims this project once
+held have been retracted on the record. The v2 work-stream
+prioritises the retrieval ceiling, since closing it would lift every
+other metric.
 :::
 
-<!--
-prompt:
-  - What did you NOT test, evaluate, or include? Where are the gaps?
-  - In what conditions would this approach fail, mislead, or degrade?
-  - What would you check, measure, or rule out before trusting this in
-    production / a decision / a downstream system?
-  - Are there known biases, assumptions, or shortcuts in the data, design,
-    or evaluation that a reader should keep in mind when interpreting the
-    results?
--->
+---
+
+## Limitations of the System {#sec-limits-system}
+
+The v1 system has three structural limits that constrain what it
+can be relied on for in production-style use.
+
+### 1. The retrieval ceiling at ~25% miss rate
+
+11 of 44 answerable questions in the N=70 benchmark (25.0%) fail
+at the retrieval stage across all four cells of the sweep. Section
+5 traced the root cause to query/chunk language asymmetry on
+single-vector CLS-pooled dense embeddings. The miss rate is **not
+a model-quality issue**: no swap of language model, no prompt
+tightening, no temperature setting can help with a question whose
+gold chunks are never in the top-k.
+
+The miss rate is also higher than the N=40 sweep suggested.
+N=40 showed 3/26 = 11.5%; N=70 showed 11/44 = 25.0%. The
+additional questions at N=70 included more cross-document and
+more chunk-targeted single-document questions, which surface the
+asymmetry more aggressively. The 25% figure is the more honest
+number to plan v2 work against.
+
+The operational implication: **headline citation_recall numbers
+should be read alongside the `excluding_retrieval_misses` subset
+number**, which is the system's actual answer-stage ceiling.
+For the production-default cell that is 0.798 — substantially
+higher than the 0.598 headline. A reader citing only the
+all_answerable number understates the answer-stage quality; a
+reader citing only the `excluding_retrieval_misses` number
+overstates the end-to-end system. Both numbers belong on the
+table.
+
+### 2. Cross-document synthesis is the system's clearest weakness
+
+The cross_document subset (n=10) scores below 0.25 mean
+citation_recall in every cell of the sweep. The production-default
+ceiling is 0.233 — roughly one gold chunk in four. Even the
+strongest cell on this subset is not at a level any operator
+should rely on without verification.
+
+`docs/governance.md` commits to this explicitly: cross-document
+synthesis is *not* a supported primary use case at v1. An
+underwriter using the system to answer "how do Munich Re and Swiss
+Re differ on thermal coal exclusions?" should treat the result as
+a starting point for manual cross-reading, not as the answer.
+
+Two compounding factors explain the weakness:
+
+- **Retrieval pressure.** Five of the 11 retrieval misses are
+  cross-document questions. The multi-issuer retrieval problem is
+  upstream of the synthesis problem; even a model with strong
+  cross-document reasoning cannot synthesise from chunks it never
+  saw.
+- **Synthesis difficulty.** Even on the cross-document questions
+  where retrieval works, the models score below their within-
+  document level. Cross-document synthesis requires the model to
+  recognise that two different chunks discuss the same underlying
+  topic from different organisational perspectives, which is a
+  qualitatively harder reasoning task than within-document
+  citation.
+
+### 3. Latency is a constant ~22 seconds on the production default
+
+The production-default Gemma 4 31B IT cell takes a mean of 22.9
+seconds per answerable question. This is acceptable for an
+underwriting-research workflow where the alternative is a human
+spending several minutes finding the same paragraph. It is not
+acceptable for an interactive workflow.
+
+A deployment with stricter latency requirements can override the
+default to Qwen 3.6 35B-A3B (6.7× faster) via the
+`UNDERWRITING_COPILOT_MODEL` environment variable. The cost of the
+override is the non-zero hallucination floor (7 on the N=70
+sweep, vs 0 on Gemma) and the ~5pp citation recall drop. The
+trade-off is documented; the system does not pick a side.
+
+---
+
+## Limitations of the Evaluation {#sec-limits-eval}
+
+The eval has four limits a reviewer should hold in mind when
+reading the headline numbers.
+
+### Citation correctness is structural, not semantic
+
+The scorer measures whether the model cited the chunks the
+benchmark author designated as gold. It does **not** measure
+whether the model's natural-language prose accurately reflects
+what those chunks say. The two failure modes the structural
+scorer cannot distinguish:
+
+- **A perfectly-cited but semantically wrong answer.** The model
+  cites the right chunk but paraphrases its content incorrectly.
+  The structural scorer records this as a citation hit; a
+  semantic-correctness scorer would record it as a miss.
+- **A semantically correct but mis-attributed answer.** The model
+  produces correct prose but cites a different chunk than the
+  gold set (perhaps a chunk that also supports the claim). The
+  structural scorer records this as a citation miss; the answer
+  is in fact correct.
+
+LLM-as-judge semantic correctness (Q10.3 in
+`docs/open_questions.md`) is the obvious extension. It is deferred
+to v2 for two reasons: (a) it would add LLM-call cost to every
+eval cell, materially slowing iteration; (b) the judge model is
+itself an uncalibrated component that introduces its own error
+distribution. Until that lands, the headline citation recall
+should be read as a **structural proxy** for semantic correctness,
+not as semantic correctness itself.
+
+### Single-seed run; no variance estimate
+
+Each cell of the sweep is a single run. The temperature-0 setting
+and pinned RNG seeds make the cell results bit-reproducible *for
+the same software state*, but the eval does not measure
+run-to-run variance from a re-seeded sweep, nor variance across
+plausible benchmark perturbations.
+
+The qualitative findings (the retraction, the within-document
+weakening, the Q12 diagnostic) are robust to any plausible
+single-seed variance — they all turn on differences of 5–30
+percentage points, not on the second decimal place. But **precise
+digits past the first decimal should be read with that caveat**.
+A reader who hopes to claim Qwen v2's 0.545 is exactly 0.053 below
+Gemma v2's 0.598 is reading the noise. The honest claim is "in
+the 5pp range, consistent across subsets."
+
+Multi-seed variance is recorded as future work; it is roughly half
+a day of eval rerunning plus aggregation code.
+
+### Hand-crafted benchmark is small and biased toward known shapes
+
+The 70-question benchmark was hand-crafted by reading the corpus
+chunks and authoring questions whose answers were known. This
+gives the benchmark three properties:
+
+- **Authentic question shape.** Questions resemble what an
+  underwriter would plausibly ask.
+- **Verifiable gold.** Every gold chunk reference was validated
+  against the indexed corpus before the sweep ran.
+- **Author bias toward known failure modes.** The benchmark
+  exercises the failure modes the author *anticipated*. Failure
+  modes the author did not anticipate are not tested.
+
+The structural partitions help — single-chunk vs multi-chunk,
+within-document vs cross-document, three refusal categories —
+but they cannot guarantee coverage of failure modes that did not
+occur to the author. A larger, multi-author benchmark would
+broaden this. It is recorded as a v2 work item.
+
+### Two-model survey, not a generalisation
+
+The 2×2 sweep tested two specific candidates because they were the
+ones that ran cleanly on the oMLX stack at a usable size during
+the five-day window. The Day-2 attempt at Gemma 4 12B was blocked
+at the `mlx_vlm` layer (Q9, closed-deferred). Other interesting
+models — Llama 3 70B variants, smaller Gemma sizes, the Qwen
+reasoning variants — were not in the survey.
+
+The headline claim "Gemma 4 31B IT is the production default" is
+therefore a within-this-survey claim, not a generalisation that
+Gemma is uniformly the best model family for citation-discipline
+RAG. A different operator on different hardware should expect to
+re-run the D014 sweep against their candidate models, not adopt
+the v1 result wholesale.
+
+---
+
+## Limitations of the Corpus {#sec-limits-corpus}
+
+The indexed v1 corpus has four properties that constrain what the
+eval results generalise to.
+
+- **Six documents, four issuers.** The corpus is *deep* on each
+  document but *shallow* on issuer diversity. PRA is over-
+  represented (three documents) relative to EIOPA (one); peer
+  reinsurer breadth is limited to two (Munich Re, Swiss Re). A
+  corpus that included Hannover Re, Lloyd's, SCOR, or Berkshire
+  Hathaway Re would broaden the cross-document subset's coverage
+  and likely change the cross_document headline number.
+- **All English.** No multilingual testing. BGE-M3 is trained to
+  be multilingual; the system's behaviour on French, German, or
+  Japanese regulatory text is unobserved.
+- **No internal documents indexed.** The three synthetic Sycamore
+  Reinsurance documents are drafted but not in the BM25 vocabulary
+  or the Qdrant collection. Indexing them is a half-day v2 task
+  and would extend the system to a fifth issuer plus internal-
+  category documents. The v1 numbers should not be read as if
+  the synthetic documents are part of the test surface.
+- **Public-only.** A real reinsurer deployment would index
+  documents that are not in the public domain. The eval numbers
+  are therefore a *floor* for in-scope public-document performance,
+  not a prediction of performance on a richer, partly-internal
+  corpus.
+
+---
+
+## Two Claims Retracted on the Record {#sec-limits-retractions}
+
+Section 5 narrated the experimental arc that produced each
+retraction; this section names both retractions in the limitations
+context, so a reader doing a limitations audit can find them
+without going back to Section 5.
+
+### Retraction 1 — The Day-2 family-axis citation discipline claim
+
+> *Original claim (Day 2, N=3):* Qwen 3.6 35B-A3B has weaker
+> rigid-format citation discipline than Gemma 4 31B IT, in a way
+> that looks like a model-family property rather than a prompt-fit
+> artefact.
+>
+> *Status:* **Retracted.** The N=40 D014 sweep showed Qwen v2
+> closed the gap to Gemma to 3.2 percentage points on full-sample
+> citation_recall, well within the 10pp pre-stated threshold. The
+> N=70 extension reaffirmed the retraction at 5.3pp residual gap.
+> Most of the Day-2 gap was prompt-fit, not model-family.
+>
+> *Residual finding:* a small absolute model behaviour difference
+> remains on the hallucination axis (Qwen v2: 7; Gemma v2: 0).
+> This is real and qualitatively meaningful, but it is not the
+> load-bearing finding the Day-2 claim was.
+
+### Retraction 2 — The N=40 within-document parity claim
+
+> *Original claim (Day 3, N=40):* On within-document workloads
+> with retrieval working, Gemma 4 31B IT and Qwen 3.6 35B-A3B
+> produce equivalent citation recall (both 0.929 on the n=21
+> within_document_retrievable subset).
+>
+> *Status:* **Weakened, not retracted.** The N=70 sweep shows
+> Gemma 0.889 vs Qwen 0.833 on the corresponding n=27 subset — a
+> 5.6pp gap, consistent with parallel gaps on other within-
+> document subsets (single_chunk_retrievable 5.9pp; multi_chunk
+> 4.1pp). The qualitative point that v2 closes most of the gap
+> survives. The quantitative point that the gap closes to zero
+> does not.
+
+Both retractions are recorded in `docs/journal.md` with timestamp
+and commit hash. The journal entries are append-only; the
+original claims are not edited, the retractions are appended.
+This is the project's primary mechanism for accountability under
+honest engineering discipline.
+
+---
+
+## Future Work {#sec-limits-future}
+
+The v2 work-stream is organised by which limitation it addresses,
+in rough priority order.
+
+### Priority 1 — Close the retrieval ceiling (Q13)
+
+The 25% retrieval miss rate is the single highest-leverage v2
+target. Closing it would lift every downstream metric. Q12's
+diagnostic identified three remediation paths, recorded as Q13:
+
+- **LLM query rewriting / HyDE.** Pre-retrieval pass that rewrites
+  or expands the user query. Targets the diagnosed root cause
+  (query/chunk language asymmetry) directly. Estimated effort:
+  1–2 hours plus added per-query LLM latency. Probably the right
+  *first* v2 experiment because it is cheap and targets the
+  diagnosis.
+- **Cross-encoder reranker.** Fetch a wider candidate set (say 50)
+  then re-rank the top-50 with a cross-encoder model. Targets
+  rank-position errors more broadly. Estimated effort: 3–4 hours
+  plus reranking latency.
+- **BGE-M3 multi-vector channel (Q7 revisit).** Move from
+  single-vector MLX to FlagEmbedding for full multi-functionality
+  including ColBERT-style late interaction. Most architecturally
+  disruptive of the three (breaks D009 MLX-everywhere). Estimated
+  effort: 4–8 hours.
+
+The N=70 retrieval-miss list (Section 6, `q001` `q004` `q013`
+`q042` `q044` `q046` `q047` `q051` `q053` `q055` `q056`) is the
+test set for v2 work. The order of magnitude that matters is "how
+many of these eleven the remediation surfaces in top-5", not "how
+much the headline number moves," because the same eleven questions
+drag the headline.
+
+### Priority 2 — LLM-as-judge semantic correctness (Q10.3)
+
+The structural citation scorer is a proxy for semantic correctness.
+A judge LLM that reads the model's prose plus the cited chunks and
+scores whether the prose is supported by those chunks would let
+the eval distinguish the two failure modes structural scoring
+collapses (cite-right-prose-wrong; cite-wrong-prose-right). This
+is the single largest extension to the eval's diagnostic power.
+
+The cost is non-trivial: every eval cell adds a judge LLM call;
+the judge itself is an uncalibrated component. The right
+sequencing is probably to run it on the existing canonical N=70
+runs *first*, see how much it shifts the headline numbers, and
+then decide whether to integrate it into the standard sweep.
+
+### Priority 3 — Multi-seed variance estimates
+
+Each cell of the current sweep is a single run. Running the sweep
+three times under three different RNG seeds (or three randomised
+permutations of question order) and reporting cell-level standard
+deviations would let the report make calibrated precision claims
+("0.598 ± 0.012") rather than the implicit point estimates the
+current report uses. Half a day of eval rerunning plus aggregation
+code.
+
+### Priority 4 — Index the synthetic Sycamore documents
+
+The three drafted-but-not-indexed Sycamore Reinsurance documents
+(`docs/dataset.qmd`, Section 3) are a half-day v2 task. The catch
+is that indexing them requires a benchmark refresh: questions
+written against the original 4-issuer corpus may now have
+candidates in the synthetic documents, changing gold-chunk
+correctness. The v1 carve-out is honest accounting; v2 closes it.
+
+### Priority 5 — Corpus and benchmark expansion
+
+A larger corpus (10–15 documents from 6–8 issuers, plus
+internal-style documents) and a larger, multi-author benchmark
+(say 150 questions) would broaden the cross-document subset and
+expose failure modes the v1 author did not anticipate. This is
+not a single deliverable; it is a sustained effort and would
+plausibly run alongside Priority 1 work for the first several
+weeks of any v2 phase.
+
+### Priority 6 — Operational hardening (security and concurrency)
+
+For a production deployment: real authentication on the oMLX
+endpoint, multi-user session isolation in the Streamlit UI,
+incremental index updates instead of one-shot rebuilds, and an
+audit log of every query and its returned `AnswerResult`.
+`docs/security.md` scopes this as the v2 security work-stream; it
+is operationally important but not a research question.
+
+### Lower priority — GEPA/DSPy systematic prompt optimisation (Q10)
+
+After D014's hand-designed v2 prompt closed most of the family-
+axis gap, the case for layering DSPy's GEPA optimiser on top
+weakened to "exploratory, not load-bearing." Q10 remains open as
+a possible v2 work-stream but no longer carries the load it would
+have if the hand-designed v2 prompt had failed.
+
+---
+
+## What Would Change Our Mind {#sec-limits-change}
+
+A handful of specific findings, if they appeared in v2 work, would
+change the headline interpretation in this report.
+
+- **A retrieval remediation that lifts `excluding_retrieval_misses`
+  above 0.85.** The current ceiling is 0.798. If a HyDE pass or
+  cross-encoder reranker pushes this above 0.85 *and* the
+  cross_document subset moves above 0.40, the system enters the
+  range where end-to-end deployment for narrow research workflows
+  starts to look plausible. Currently it does not.
+
+- **LLM-as-judge semantic scoring that shows a Gemma-vs-Qwen
+  inversion.** The current production model selection assumes
+  citation discipline correlates with semantic correctness. A
+  judge that found Qwen produces more semantically accurate prose
+  while citing fewer correct chunks would force a re-evaluation
+  of D015. We do not expect this finding; we record it as the
+  shape of evidence that would change our mind.
+
+- **A larger, multi-author benchmark that shifts the within-
+  document gap to 2pp.** If a 150-question multi-author benchmark
+  shrinks the within-document Gemma-Qwen gap from the current 5pp
+  to ~2pp, the latency-vs-quality trade-off shifts substantially
+  in Qwen's favour, and D015 is worth revisiting.
+
+- **A multi-seed run that shows >3pp variance per cell.** This
+  would invalidate the precise-digit reading of every result in
+  Section 6 and require the report to re-state findings with
+  calibrated precision. The qualitative findings would survive;
+  the quantitative claims would not.
+
+These are the four findings the project would weight heavily as
+evidence against current claims. None are expected; all are
+specifically falsifiable.
+
+---
+
+## Limitations at a Glance {#sec-limits-glance}
+
+| | |
+|---|---|
+| **Retrieval ceiling** | 25% miss rate on N=70 answerable subset; caps headline at 0.598 against a 0.798 answer-stage ceiling |
+| **Cross-document weakness** | All cells below 0.25 mean citation_recall on n=10 cross_document subset; not a supported primary use case |
+| **Latency** | 22.9s mean answerable on production default; not suitable for interactive workflows |
+| **Citation scoring** | Structural proxy only — does not measure whether prose accurately reflects cited chunks |
+| **Run variance** | Single-seed runs; precise digits past first decimal should be read with caveat |
+| **Benchmark coverage** | Hand-crafted by single author; failure modes not anticipated are not tested |
+| **Model coverage** | Two-model survey only; D015 is within-this-survey, not a generalisation |
+| **Corpus coverage** | 6 documents, 4 issuers, all English, all public; no internal documents indexed in v1 |
+| **Retractions on record** | 2 — family-axis (Day 2) and within-document parity (N=40 → N=70) |
+| **v2 Priority 1** | Close retrieval ceiling via HyDE or cross-encoder reranker (Q13) |
+| **v2 Priority 2** | LLM-as-judge semantic correctness (Q10.3) |
+| **v2 Priority 3** | Multi-seed variance estimates |
+| **v2 Priorities 4–6** | Index synthetic documents · corpus + benchmark expansion · operational hardening |
+| **What would change our mind** | Retrieval lift past 0.85 on excluding_retrieval_misses · Gemma/Qwen semantic inversion · benchmark shows 2pp gap · multi-seed variance >3pp |

@@ -1,17 +1,384 @@
 ---
-title: "Data / Inputs"
+title: "The Corpus"
 ---
 
-::: {.callout-tip}
-**What the project consumes as input** — datasets, files, APIs, configuration,
-or anything else it depends on from the outside world. Delete this section if
-the project doesn't have meaningful inputs to describe.
+
+::: {.callout-note icon=false}
+## Plain-Language Summary
+
+The system has read six public documents — three UK regulator
+supervisory statements, one EU regulator guideline, and two large
+reinsurers' sustainability reports — and converted them into 461
+small searchable pieces ("chunks"). This section describes which
+documents were chosen and why, how they were converted from PDF to
+text, how they were split into chunks, and how metadata about each
+document (who published it, when, on what topic) is tracked. Three
+additional fictional internal-style documents have been drafted to
+show the system extends beyond regulators and listed firms, but are
+not yet indexed into the searchable store.
 :::
 
-<!--
-prompt:
-  - What inputs does this project rely on (data, files, services, secrets)?
-  - Where do they come from, and who owns them?
-  - What does the input look like in shape, size, and quality?
-  - Are there licensing, privacy, or access constraints a reader should know?
--->
+---
+
+## What Is in the Corpus {#sec-data-corpus}
+
+The indexed v1 corpus is **six PDF documents from four issuers**,
+all publicly published, totalling 15.3 MB on disk and 461 chunks
+after preprocessing. Their metadata is hand-curated in
+`corpus/corpus_metadata.toml` and validated by a Pydantic schema at
+load time (per D006).
+
+| Document | Issuer | Type | Effective | Size |
+|---|---|---|---|---|
+| Supervisory Statement 5/25 — Climate-related risks (banks and insurers) | PRA | Supervisory statement | 2025-12-01 | 588 KB |
+| Supervisory Statement 3/19 — Financial risks from climate change | PRA | Supervisory statement (superseded by SS5/25) | 2024-11-01 | 1.16 MB |
+| Supervisory Statement 1/21 — Operational resilience: Impact tolerances | PRA | Supervisory statement | 2021-03-01 | 2.39 MB |
+| Guidelines on System of Governance | EIOPA | Regulatory guideline | 2014-01-01 | 264 KB |
+| Sustainability Report 2023 | Munich Re | Sustainability report | 2023-12-31 | 5.05 MB |
+| Sustainability Report 2024 | Swiss Re | Sustainability report | 2024-12-31 | 5.91 MB |
+
+: The indexed v1 corpus (`corpus/real/`). {#tbl-data-corpus}
+
+The three regulatory documents (PRA × 3, EIOPA × 1) cover the
+**risk-management and governance** axis that an underwriter working
+on UK or EEA business would routinely cite. The two reinsurer
+sustainability reports (Munich Re, Swiss Re) cover the **disclosed
+position** axis — what peer reinsurers have publicly committed to
+on climate, thermal coal exclusions, oil-and-gas underwriting, and
+related ESG topics. Together they exercise the system on the two
+practical document modes an underwriter actually works against:
+regulator-imposed *obligations* and competitor-published
+*positions*.
+
+### Why these documents
+
+The corpus was deliberately kept small (six documents) so that the
+evaluation could be hand-crafted, the citation gold could be
+verified by hand, and the retrieval failures could be diagnosed
+individually rather than statistically. A larger corpus is a v2
+work item, not a v1 success criterion.
+
+Within that constraint, the documents were chosen to satisfy three
+properties:
+
+- **Realism over breadth.** Each document is one an actual
+  reinsurance underwriter would plausibly consult on a real
+  question. Toy documents (e.g. Wikipedia abstracts on
+  reinsurance) were rejected on Day 1.
+
+- **Variety of structural shape.** The PRA supervisory statements
+  have numbered paragraphs and tight section hierarchy; EIOPA's
+  guidelines are similarly structured but use a different
+  conventions; Munich Re and Swiss Re sustainability reports are
+  designer-laid-out PDFs with figures, tables, and an order in
+  which Docling does not always recover the reading sequence
+  cleanly. The chunker (D008, below) is built to handle all
+  three styles.
+
+- **Variety of citation density.** A question against PRA SS5/25
+  typically resolves to one specific paragraph (e.g. 4.124); a
+  question against Munich Re's sustainability report may need to
+  cite the prose plus an adjacent table cell; a cross-document
+  question against Munich Re and Swiss Re needs to cite a
+  paragraph from each. The benchmark exercises all three.
+
+### Provenance note
+
+The Munich Re Sustainability Report 2023 was retrieved from the
+**UNEP FI mirror** after the canonical `munichre.com` URL began
+returning a 404 on 2026-06-17. The `corpus_metadata.toml`
+`source_url` field records the URL actually used for retrieval,
+not the canonical publisher URL, on the principle that a reviewer
+needs to know *where the document in the indexed corpus came from*,
+not where it ideally should have been retrieved from. This is the
+discipline the project applies across its decision logs and
+journal: record the world as it actually was on the day of the
+decision, not a tidied-up version after the fact.
+
+---
+
+## Document Conversion: Docling with OCR Disabled {#sec-data-docling}
+
+PDF → markdown conversion is handled by [Docling](https://github.com/DS4SD/docling),
+configured with OCR explicitly **disabled** per D004.
+
+The default Docling pipeline runs OCR on every page of every PDF
+regardless of whether the PDF actually contains scanned images. For
+text-PDF corpora (verified via the `file` command), this means
+roughly 40 MB of OCR model weights downloaded on first run and
+roughly 60% additional ingestion time per document — for zero
+quality improvement, because the underlying text layer is already
+clean. All six documents in the v1 corpus are text PDFs, so OCR
+runs only on the (currently empty) set of corpus documents that
+would actually need it.
+
+The mitigation is documented in D004 alongside the decision: if a
+future scanned PDF is added to the corpus, OCR must be re-enabled
+for that specific document via a per-document configuration
+override. Silent fallback to OCR-off-for-everything is preferred to
+silent fallback to OCR-on-for-everything, on the basis that the
+former produces an obvious empty-text symptom and the latter
+produces an opaque 60%-slower ingest with no signal.
+
+Reinsurer sustainability reports dominate ingestion time. The two
+sustainability reports (Munich Re + Swiss Re) together account for
+roughly **80% of the ~134-second full-corpus Docling pass**, despite
+being only 33% of the document count. Their internal layout (figures,
+tables, multi-column passages) is structurally more expensive to
+extract than the linear paragraph flow of the supervisory
+statements. Any chunker or cleanup tuning is therefore batched
+rather than re-ingesting on every change.
+
+---
+
+## Cleanup Pre-Pass {#sec-data-cleanup}
+
+After Docling produces markdown, a three-rule cleanup pre-pass
+addresses systematic extraction artefacts. The rules are applied in
+order:
+
+1. **Universal: strip `<!-- image -->` placeholders.** Docling emits
+   one of these for every image it detects but does not extract;
+   they appear 398 times across the v1 corpus and are pure noise
+   for retrieval. Removed corpus-wide.
+
+2. **Structural: dedupe repeated table-of-contents blocks.** Munich
+   Re's sustainability report contains, in the PDF, a top-level TOC
+   that Docling extracts verbatim three or more times due to
+   recurring section-header tables. The cleanup pass keeps the
+   first occurrence and removes subsequent verbatim duplicates,
+   preserving distinct TOC variants (which do exist in the source
+   PDF) by keying on exact text equality, not by counting.
+
+3. **Document-specific: targeted glyph and watermark fixes.** EIOPA's
+   PDF contains a recurrent `glyph[.notdef]` artefact from a font-
+   encoding pathology, mapped to a hyphen. PRA SS1/21 carries an
+   inline "Superseded" watermark and a "Please see: ss1/22-march-2022.pdf"
+   link that appears mid-paragraph; both are stripped because they
+   are not actually part of the document's text content.
+
+The cleanup function is pure — input string + document_id, output
+cleaned string + statistics. No I/O, no global state, fully
+testable.
+
+---
+
+## Chunking: Two-Pass with Floor Merge {#sec-data-chunking}
+
+Chunking is the single most consequential preprocessing decision
+because it determines both what the dense embeddings index and what
+the answer model receives as context. The v1 chunker is the result
+of D008 (which superseded an earlier D007 single-mode strategy)
+and uses a **two-pass algorithm** with explicit token bounds.
+
+### Pass 1 — Emission
+
+The markdown is parsed at heading boundaries (`##`, `###`, etc.).
+Each segment between two headings becomes a candidate chunk,
+including a `(preamble)` segment for any text before the first
+heading. For each candidate:
+
+- If the segment fits under a **soft cap of 1500 tokens**, it is
+  emitted as a single `hierarchy` chunk preserving its
+  section-path metadata.
+
+- If the segment exceeds the soft cap, it is split using paragraph
+  fallback: numbered-paragraph anchors first (PRA-style "4.124"
+  markers), then blank-line paragraphs, then greedy word splitting
+  as a last resort.
+
+### Pass 2 — Floor merge
+
+Sub-floor chunks (fewer than **100 tokens**) are merged with their
+neighbours to avoid stranded fragments. The merge prefers backward
+(into the previous chunk), falling back to forward (into the next)
+if backward would push the receiver over the cap. If either merge
+would breach the cap, the sub-floor chunk is left standing.
+
+The loop does not advance after a merge — the same position is
+rechecked, so a merged chunk that is itself still under floor gets
+re-merged in a subsequent iteration. This handles the case where
+several adjacent small fragments need to be coalesced together.
+
+### Output
+
+The full corpus produces **461 chunks**, all between 100 and 1500
+tokens. Chunk IDs are stable across runs (the emission pass
+numbers chunks sequentially; the floor-merge pass leaves gaps in
+the ID sequence rather than renumbering). This stability matters
+for the citation contract: a `[chunk_id]` in an answer should
+resolve to the same paragraph today and after the next corpus
+rebuild.
+
+::: {.callout-warning}
+## Token counts are word splits, not tokenizer tokens
+The 1500/100 thresholds are in units of **whitespace-split words**,
+not BGE-M3 or model-family BPE/WordPiece tokens. The Probe-03
+size-distribution analysis that calibrated these thresholds used
+word counts; swapping in a real tokenizer would silently change
+what the thresholds mean. If the embedding model is ever changed,
+D008 must be revisited.
+:::
+
+---
+
+## Metadata: Hand-Curated TOML, Pydantic-Validated {#sec-data-metadata}
+
+Per-document metadata is stored in `corpus/corpus_metadata.toml` and
+validated at load time against the `DocumentMetadata` Pydantic
+schema in `src/underwriting_copilot/metadata.py`. The decision to
+hand-curate metadata rather than infer it from document content is
+recorded as D006.
+
+The fields tracked per document, all inherited by every chunk via
+the chunk's `document_id`, are:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `document_id` | string | Stable id used by retrieval filters and citation IDs |
+| `title` | string | Display name used in source cards and citations |
+| `document_type` | enum | `supervisory_statement` / `regulatory_guideline` / `sustainability_report` / `internal_policy` |
+| `issuer` | string | Publishing organisation (`PRA`, `EIOPA`, `Munich Re`, ...) |
+| `issuer_type` | enum | `regulator` / `reinsurer` / `internal` |
+| `jurisdiction` | string | `UK` / `EU` / `Global` / etc. — used in retrieval filters |
+| `effective_date` | date | Used to detect supersession and currency |
+| `version` | string | Document version identifier (`SS5/25`, `2024`, ...) |
+| `superseded_by` | string? | Optional pointer to a newer document_id |
+| `topics` | list[string] | Free-form topic labels (see *Q5* below) |
+| `provenance` | enum | `real` / `synthetic` |
+| `source_url` | URL | Where the document was actually retrieved (not necessarily the canonical publisher URL) |
+
+The two cleanly-typed fields (`document_type` and `issuer_type`)
+were promoted from free-text to enum after the first hand-curated
+pass surfaced a small number of typos and inconsistent
+capitalisation; the Pydantic schema catches new typos on the next
+metadata edit.
+
+### Supersession is tracked structurally {#sec-data-supersession}
+
+The `superseded_by` field is non-cosmetic. PRA SS3/19 (climate
+financial risks, effective 2024) was superseded in late 2025 by
+PRA SS5/25 (the same topic, expanded scope). Both PDFs are in the
+indexed corpus because both remained in the wild for the first
+half of 2026 and an underwriter researching a question that
+existed under SS3/19 may still need to know what it said.
+
+The retrieval pipeline exposes an `exclude_superseded=True`
+parameter, defaulted to True, which filters SS3/19 chunks out of
+the candidate pool whenever its successor SS5/25 is in the corpus.
+The decision to default this to True (rather than letting both
+versions compete in retrieval) was D012, on the basis that the
+default behaviour of any production research tool should be to
+return the currently-in-force version unless explicitly asked
+otherwise.
+
+A user who specifically needs the SS3/19 perspective can override
+the flag at retrieval time. The default protects the common case.
+
+### Topic vocabulary remains open (Q5)
+
+The `topics` field is free-form across the v1 corpus, and the
+first hand-curated pass surfaced near-synonyms that have not been
+resolved: `scenario_analysis` (used in PRA climate documents) vs
+`scenario_testing` (used in PRA SS1/21 on operational resilience);
+`esg` vs `sustainability` across the two reinsurer reports. For
+*retrieval*, hybrid retrieval handles synonyms gracefully — both
+terms surface relevant chunks. For *filtering* — e.g. "show me
+only ESG documents" — the synonym pair splits the result set.
+
+Q5 in `docs/open_questions.md` records the deferral: whether to
+introduce a controlled vocabulary now (six documents, easy) or
+defer until the corpus is larger and the synonym problem is
+visible in eval results. The defer-with-reasoning posture is
+recorded explicitly; the question stays open rather than being
+quietly decided.
+
+---
+
+## Indexing: Dense + Sparse, Both Local {#sec-data-indexing}
+
+The 461 chunks are indexed twice, both stores running locally with
+no remote services in the pipeline.
+
+**Dense index** — BGE-M3 embeddings produced via `mlx-embeddings`
+on Apple Silicon (D009 path B). Embeddings are CLS-pooled and
+L2-normalised (D010) and stored in a local Qdrant collection at
+`scratch/qdrant/`. The model was selected for its strong
+multilingual and domain coverage; regulatory English and corporate-
+disclosure English are both well within its training distribution.
+
+**Sparse index** — BM25 with a custom Porter-stemmed vocabulary
+extracted from the corpus, persisted at `corpus/bm25_vocab.json`.
+The vocabulary contains roughly 4,810 stem-normalised terms after
+stopword filtering. BM25 was implemented in-repo rather than
+imported from a heavy IR library, both to keep dependencies small
+and to make the scoring fully inspectable when retrieval failures
+need to be diagnosed by hand.
+
+Both indices are built once and persisted to disk. The retrieval
+pipeline (Section 4) queries both at every request and fuses the
+results.
+
+The architectural decision to use **both** retrieval channels —
+rather than dense alone — was made on Day 1 evidence and recorded
+as D009. The reasoning is in the next section.
+
+---
+
+## Synthetic Documents: Drafted, Not Indexed {#sec-data-synthetic}
+
+Three additional synthetic documents are present on disk in
+`corpus/synthetic/`, representing the kinds of internal documents
+an actual deployment would also need to handle:
+
+| Filename | Document type | Purpose |
+|---|---|---|
+| `sycamore_risk_appetite_statement.md` | Risk appetite statement | Board-level statement of tolerable risk |
+| `sycamore_delegated_authority_matrix.md` | Delegated authority matrix | Who can underwrite what, up to what limits |
+| `sycamore_thermal_coal_underwriting_policy.md` | Internal underwriting policy | Issuer-specific exclusions and conditions |
+
+These documents are written under the fictional issuer **Sycamore
+Reinsurance** (clearly labelled as synthetic in the metadata
+schema's `provenance = "synthetic"` field) to demonstrate
+structurally that the pipeline extends to internal-category
+content without requiring any real reinsurer to share confidential
+documents for an interview artefact.
+
+In v1, however, these three documents are **drafted but not
+indexed**. They do not appear in the BM25 vocabulary, they are not
+in the Qdrant collection, and the v1 eval numbers are reported
+exclusively against the 4-issuer real corpus. Indexing the
+synthetic documents is a half-day v2 task and is recorded as a v2
+work item rather than half-finished in v1.
+
+The reason for the carve-out is honest accounting: if the synthetic
+documents were partially indexed, eval numbers would be reported
+against a corpus that does not exist for any of the questions
+written before the synthetic documents were drafted, and the
+benchmark would need to be re-checked end-to-end to preserve
+gold-chunk references. Within the five-day budget, drafting the
+synthetic documents (to show the pipeline scope) is preferred to
+indexing them (which would require a benchmark refresh that does
+not fit).
+
+---
+
+## Corpus at a Glance {#sec-data-glance}
+
+| | |
+|---|---|
+| **Indexed documents** | 6 |
+| **Indexed issuers** | 4 (PRA × 3, EIOPA × 1, Munich Re × 1, Swiss Re × 1) |
+| **Document types** | Supervisory statement (×3), regulatory guideline (×1), sustainability report (×2) |
+| **Jurisdictions** | UK (×3), EU (×1), Global (×2) |
+| **Total disk size** | 15.3 MB across 6 PDFs |
+| **Chunks after preprocessing** | **461**, all 100–1500 tokens |
+| **PDF → markdown** | Docling, OCR disabled (D004) |
+| **Cleanup rules** | 3 (image-placeholder strip, TOC dedupe, document-specific glyph/watermark) |
+| **Chunker** | Two-pass per D008: emission with paragraph fallback + floor-merge |
+| **Metadata** | Hand-curated TOML, Pydantic-validated (D006) |
+| **Supersession** | Tracked structurally; SS3/19 → SS5/25 filtered by default (D012) |
+| **Dense index** | BGE-M3 (CLS-pooled, L2-normalised), Qdrant local |
+| **Sparse index** | BM25 with Porter-stemmed vocabulary (~4,810 terms) |
+| **Drafted, not indexed** | 3 synthetic Sycamore Reinsurance documents (v2 work) |
+| **Topic vocabulary** | Open (Q5) — free-form labels, controlled-vocab decision deferred |
