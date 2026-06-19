@@ -335,6 +335,157 @@ def test_render_answer_with_badges_marks_hallucinations():
     assert "[?]" in html_out
 
 
+def test_render_answer_with_badges_converts_markdown_bold():
+    """Gemma emits ``**bold**`` markdown emphasis for section headers
+    in structured answers (e.g. ``**Coal Exclusions**``). These must
+    render as ``<strong>`` tags, not as literal asterisks in the
+    output.
+
+    Regression: before the markdown-conversion fix, the answer card
+    showed ``**Coal Exclusions**`` with raw asterisks visible — a
+    client-facing rendering bug the underwriter noticed on the
+    cross-document synthesis query."""
+    from app import render_answer_with_badges
+
+    result = _FakeAnswerResult(
+        query="Q",
+        answer="**Coal Exclusions** are documented [chunk_a].",
+        citations=["chunk_a"],
+        used_chunks=[_make_fake_hit("chunk_a")],
+    )
+    html_out = render_answer_with_badges(result)
+    assert "<strong>Coal Exclusions</strong>" in html_out
+    assert "**Coal Exclusions**" not in html_out
+    # Citation badge still resolves alongside the markdown
+    assert 'href="#src-chunk_a"' in html_out
+
+
+def test_render_answer_with_badges_converts_markdown_lists():
+    """Gemma emits ``* item`` bullets at line-start for list content.
+    These must render as ``<ul><li>`` HTML, not as literal asterisks."""
+    from app import render_answer_with_badges
+
+    answer_text = (
+        "Three exclusions apply:\n\n"
+        "* Coal mining [chunk_a]\n"
+        "* Oil sands [chunk_a]\n"
+        "* Tar deposits [chunk_a]\n"
+    )
+    result = _FakeAnswerResult(
+        query="Q",
+        answer=answer_text,
+        citations=["chunk_a"],
+        used_chunks=[_make_fake_hit("chunk_a")],
+    )
+    html_out = render_answer_with_badges(result)
+    assert "<ul>" in html_out
+    assert "<li>" in html_out
+    assert "* Coal mining" not in html_out
+
+
+def test_render_answer_with_badges_normalizes_inline_bullets():
+    """Gemma sometimes emits bullet lists inline as ``" * **Header:**"``
+    within a flowing paragraph rather than as line-separated items. The
+    renderer must promote these to proper markdown bullets so the output
+    shows a ``<ul><li>`` structure instead of literal asterisks between
+    bolded headers.
+
+    Regression: this was the second pass after the bare markdown-conversion
+    fix. The first pass rendered ``**Coal Exclusions**`` as bold but left
+    stray ``*`` characters visible between ``Coal Exclusions`` and
+    ``Munich Re:`` in the cross-document synthesis answer."""
+    from app import render_answer_with_badges
+
+    # Mimics Gemma's actual output structure for cross-doc synthesis.
+    answer_text = (
+        "**Coal Exclusions** * **Munich Re:** Excludes coal [chunk_a] . "
+        "* **Swiss Re:** Aims to exit coal [chunk_a] ."
+    )
+    result = _FakeAnswerResult(
+        query="Q",
+        answer=answer_text,
+        citations=["chunk_a"],
+        used_chunks=[_make_fake_hit("chunk_a")],
+    )
+    html_out = render_answer_with_badges(result)
+
+    # Bullets must render as a proper list.
+    assert "<ul>" in html_out
+    assert "<li>" in html_out
+
+    # No literal " * " between bold headers — the load-bearing assertion.
+    assert " * <strong>Munich Re:</strong>" not in html_out
+    assert " * <strong>Swiss Re:</strong>" not in html_out
+
+    # Section header still rendered as standalone bold.
+    assert "<strong>Coal Exclusions</strong>" in html_out
+    # Bullet contents still bold.
+    assert "<strong>Munich Re:</strong>" in html_out
+    assert "<strong>Swiss Re:</strong>" in html_out
+
+
+def test_render_answer_with_badges_normalizes_nbsp_bullets():
+    """Gemma has been observed emitting NBSP (U+00A0) between the
+    closing ``**`` of a bold section header and the next ``*`` bullet
+    marker, instead of a regular space. A brittle exact-space regex
+    silently fails on this and lets the stray ``*`` reach the rendered
+    output. The whitespace-tolerant pattern (``\\s+``) handles it.
+
+    Regression: this is the third pass on the inline-bullets bug. The
+    second pass passed its unit test (which used ASCII spaces) but
+    still showed stray asterisks in the live UI because Gemma's actual
+    output contained NBSP that the regex didn't match. Diagnosed via
+    external review of the unit-test vs live-output divergence."""
+    from app import render_answer_with_badges
+
+    # NBSP (U+00A0) between the bold delimiter and the bullet marker.
+    nbsp = "\u00a0"
+    answer_text = (
+        f"**Coal Exclusions**{nbsp}*{nbsp}**Munich Re:** Excludes coal [chunk_a] ."
+    )
+    result = _FakeAnswerResult(
+        query="Q",
+        answer=answer_text,
+        citations=["chunk_a"],
+        used_chunks=[_make_fake_hit("chunk_a")],
+    )
+    html_out = render_answer_with_badges(result)
+
+    # Bullet must render as a list item, not as a literal asterisk.
+    assert "<ul>" in html_out
+    assert "<li>" in html_out
+    # Critical: the stray "*" must NOT appear adjacent to <strong>.
+    # We check for the literal asterisk character to catch any case
+    # where it leaked through.
+    assert "* <strong>Munich Re:</strong>" not in html_out
+    assert f"{nbsp}*{nbsp}<strong>" not in html_out
+
+
+def test_render_answer_with_badges_normalizes_newline_separated_bullets():
+    """Gemma may also emit bullets with a single newline before the
+    asterisk rather than a blank line. ``sane_lists`` markdown extension
+    requires a blank line above a list, so the renderer must still
+    promote single-newline-asterisk patterns to double-newline form."""
+    from app import render_answer_with_badges
+
+    answer_text = (
+        "**Coal Exclusions**\n"
+        "* **Munich Re:** Excludes coal [chunk_a] .\n"
+        "* **Swiss Re:** Aims to exit coal [chunk_a] ."
+    )
+    result = _FakeAnswerResult(
+        query="Q",
+        answer=answer_text,
+        citations=["chunk_a"],
+        used_chunks=[_make_fake_hit("chunk_a")],
+    )
+    html_out = render_answer_with_badges(result)
+
+    assert "<ul>" in html_out
+    assert "<li>" in html_out
+    assert "<strong>Coal Exclusions</strong>" in html_out
+
+
 # ---- "New question" button -------------------------------------------
 
 
@@ -363,3 +514,24 @@ def test_new_question_button_clears_result_and_returns_to_empty_state():
     # Sample grid visible again.
     rendered = "\n".join(m.value for m in at.markdown)
     assert "Try a sample question" in rendered
+
+
+# ---- Assets ----------------------------------------------------------
+
+
+def test_sycamore_logo_asset_present():
+    """The Sycamore Reinsurance synthetic-issuer mark must exist at
+    assets/sycamore.png. The sidebar render path is guarded by an
+    `if SYCAMORE_LOGO.exists()` check so a missing asset will silently
+    drop the mark — this test catches that silent drop before it
+    reaches the live UI."""
+    from app import SYCAMORE_LOGO
+
+    assert SYCAMORE_LOGO.exists(), (
+        f"Missing asset: {SYCAMORE_LOGO}. The sidebar synthetic-corpus "
+        f"mark will not render. Place the PNG at this path."
+    )
+    # Basic sanity: not an empty file.
+    assert SYCAMORE_LOGO.stat().st_size > 1024, (
+        f"Asset present but suspiciously small ({SYCAMORE_LOGO.stat().st_size} bytes)"
+    )

@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 import httpx
+import markdown as md
 import streamlit as st
 
 from underwriting_copilot.answer import (
@@ -51,6 +52,8 @@ def log(msg: str) -> None:
 REPO_ROOT = Path(__file__).resolve().parent
 QDRANT_PATH = REPO_ROOT / "scratch" / "qdrant"
 VOCAB_PATH = REPO_ROOT / "corpus" / "bm25_vocab.json"
+ASSETS_DIR = REPO_ROOT / "assets"
+SYCAMORE_LOGO = ASSETS_DIR / "sycamore.png"
 
 MODEL_OPTIONS = [
     ("gemma-4-31B-it-MLX-6bit", "Gemma 4 31B IT  ·  production default  ·  ~30–60s/query"),
@@ -158,35 +161,35 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
 .question-card {
     background: #0f172a;
     color: #f1f5f9;
-    padding: 1.1rem 1.4rem;
+    padding: 1.2rem 1.5rem;
     border-radius: 8px;
-    font-size: 1.02rem;
+    font-size: 1.18rem;
     line-height: 1.5;
     margin: 1.5rem 0 1rem 0;
     font-weight: 500;
 }
 .question-card .question-label {
     display: block;
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: #94a3b8;
-    margin-bottom: 0.35rem;
+    margin-bottom: 0.4rem;
 }
 
 .answer-card {
     background: #ffffff;
     border: 1px solid #e2e8f0;
     border-radius: 8px;
-    padding: 1.6rem 1.8rem;
-    font-size: 1rem;
-    line-height: 1.7;
+    padding: 1.75rem 2rem;
+    font-size: 1.18rem;
+    line-height: 1.75;
     color: #0f172a;
     margin-bottom: 1.25rem;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
-.answer-card p { margin: 0 0 0.85rem 0; }
+.answer-card p { margin: 0 0 1rem 0; }
 .answer-card p:last-child { margin-bottom: 0; }
 
 .cite {
@@ -195,9 +198,9 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
     color: #1e40af;
     border: 1px solid #bfdbfe;
     border-radius: 4px;
-    padding: 0 5px;
-    margin: 0 1px;
-    font-size: 0.72em;
+    padding: 0 6px;
+    margin: 0 2px;
+    font-size: 0.78em;
     font-weight: 600;
     text-decoration: none !important;
     font-family: 'JetBrains Mono', 'SF Mono', monospace;
@@ -223,32 +226,32 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
     background: #f8fafc;
     border: 1px solid #e2e8f0;
     border-left: 4px solid #64748b;
-    padding: 1.1rem 1.4rem;
+    padding: 1.25rem 1.5rem;
     color: #334155;
     border-radius: 6px;
     margin: 1rem 0 1.25rem 0;
 }
 .refusal-card .refusal-label {
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: #64748b;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.5rem;
 }
 .refusal-card .refusal-text {
-    font-size: 0.98rem;
-    line-height: 1.5;
+    font-size: 1.15rem;
+    line-height: 1.55;
 }
 
 .halluc-banner {
     background: #fef2f2;
     border: 1px solid #fecaca;
     border-left: 4px solid #dc2626;
-    padding: 0.9rem 1.2rem;
+    padding: 1rem 1.3rem;
     border-radius: 6px;
     color: #991b1b;
-    font-size: 0.88rem;
+    font-size: 1rem;
     margin: 0.5rem 0 1.25rem 0;
 }
 .halluc-banner b { color: #7f1d1d; }
@@ -352,22 +355,22 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
 .source-issuer {
     font-weight: 600;
     color: #0f172a;
-    font-size: 0.88rem;
+    font-size: 1rem;
 }
 .source-title {
     color: #475569;
-    font-size: 0.85rem;
+    font-size: 0.95rem;
 }
 .source-breadcrumb {
     color: #64748b;
-    font-size: 0.78rem;
+    font-size: 0.85rem;
     margin-bottom: 0.5rem;
     font-family: 'JetBrains Mono', 'SF Mono', monospace;
     word-break: break-word;
 }
 .source-cid {
     color: #94a3b8;
-    font-size: 0.68rem;
+    font-size: 0.72rem;
     margin-bottom: 0.6rem;
     font-family: 'JetBrains Mono', monospace;
     word-break: break-all;
@@ -375,12 +378,12 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
 }
 .source-text {
     color: #1e293b;
-    font-size: 0.88rem;
-    line-height: 1.6;
+    font-size: 1rem;
+    line-height: 1.65;
     border-top: 1px solid #f1f5f9;
-    padding-top: 0.7rem;
+    padding-top: 0.8rem;
     white-space: pre-wrap;
-    max-height: 280px;
+    max-height: 360px;
     overflow-y: auto;
 }
 
@@ -507,10 +510,57 @@ def build_ordinal_map(answer_text: str) -> dict[str, int]:
 
 
 def render_answer_with_badges(result: AnswerResult) -> str:
-    """Return HTML for the answer text with citations rewritten as badges."""
+    """Return HTML for the answer text with citations rewritten as badges.
+
+    Gemma emits markdown (``**bold**`` for section headers, ``* item``
+    for bullet lists). We escape literal HTML first, then convert
+    markdown to HTML, then substitute citation badges over the rendered
+    HTML.
+
+    Order is load-bearing:
+    1. ``html.escape`` neutralises any raw HTML in Gemma's output so it
+       cannot render as markup.
+    2. ``md.markdown`` converts markdown emphasis and lists. HTML
+       entities from step 1 (``&lt;``, ``&gt;``) pass through unchanged.
+    3. ``CITATION_REGEX.sub`` finds ``[chunk_id]`` tokens in the
+       resulting HTML and replaces them with ``<a class="cite">``
+       badges. The markdown library leaves bare ``[chunk_id]`` tokens
+       as literal text (no matching link reference is defined for
+       them), so the pattern survives intact.
+
+    ``sane_lists`` extension keeps list parsing strict — inline
+    asterisks that are not at the start of a line do not accidentally
+    start lists.
+    """
     halluc_set = set(result.hallucinated_citations)
     ordinal_map = build_ordinal_map(result.answer)
+
     escaped = html.escape(result.answer)
+    # Gemma sometimes emits bullet lists inline as " * **Header:**" within
+    # a flowing paragraph rather than line-separated. Markdown only treats
+    # "*" as a bullet marker when it appears at the start of a line, so
+    # those mid-paragraph markers would otherwise render as literal
+    # asterisks. Promote each whitespace-asterisk-whitespace sequence
+    # immediately followed by bold (**) into a line-separated bullet so
+    # the markdown pass sees a proper list.
+    #
+    # Whitespace is matched with \s+ so the pattern tolerates anything
+    # Python recognises as whitespace — regular space (U+0020), NBSP
+    # (U+00A0), narrow NBSP (U+202F), tab, newline. Gemma has been
+    # observed emitting NBSP between bold markers, which a literal
+    # space-asterisk-space regex silently misses.
+    #
+    # The bullet character set includes Unicode asterisk variants in
+    # case the model emits a fullwidth (U+FF0A), asterisk-operator
+    # (U+2217), or low-asterisk (U+204E) instead of ASCII U+002A. The
+    # lookahead remains ASCII ** because that is what the bold-render
+    # path consistently produces in observed output.
+    bullet_pattern = r"\s+[*\uff0a\u2217\u204e]\s+(?=\*\*)"
+    bullet_matches = len(re.findall(bullet_pattern, escaped))
+    if bullet_matches:
+        log(f"normalised {bullet_matches} inline-bullet marker(s) in answer")
+    normalized = re.sub(bullet_pattern, "\n\n* ", escaped)
+    html_body = md.markdown(normalized, extensions=["sane_lists"])
 
     def replace_citation(match: re.Match) -> str:
         cid = match.group(1)
@@ -525,10 +575,8 @@ def render_answer_with_badges(result: AnswerResult) -> str:
             f'title="{html.escape(cid)}">[{n}]</a>'
         )
 
-    rewritten = CITATION_REGEX.sub(replace_citation, escaped)
-    paragraphs = [p.strip() for p in rewritten.split("\n\n") if p.strip()]
-    body = "".join(f"<p>{p}</p>" for p in paragraphs)
-    return f'<div class="answer-card">{body}</div>'
+    rewritten = CITATION_REGEX.sub(replace_citation, html_body)
+    return f'<div class="answer-card">{rewritten}</div>'
 
 
 def render_source_card(hit, ordinal: int | None, cited: bool) -> str:
@@ -702,6 +750,23 @@ with st.sidebar:
             if st.button(short, key=f"hist_{hash(q)}", help=q):
                 st.session_state.pending_query = q
                 st.rerun()
+
+    # Synthetic test corpus issuer mark. Sycamore Reinsurance is a fictional
+    # reinsurer whose generated documents form part of the indexed corpus per
+    # D003. The mark is displayed here to make that origin visible without
+    # conflating it with Cedant's own brand at the top of the sidebar.
+    if SYCAMORE_LOGO.exists():
+        st.markdown("### Test corpus")
+        st.image(str(SYCAMORE_LOGO), width=140)
+        st.markdown(
+            '<div style="font-size:0.78rem;color:#64748b;margin-top:-0.4rem;'
+            'line-height:1.4;">'
+            '<b style="color:#475569;">Sycamore Reinsurance</b><br>'
+            'Synthetic issuer generated for D003 corpus documents — '
+            'not a real entity.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ============================================================================
