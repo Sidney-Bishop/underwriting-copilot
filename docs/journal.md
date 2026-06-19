@@ -1226,3 +1226,40 @@ A v2 work-stream is named with prioritised remediation paths and
 realistic scope.
 
 This entry is the last journal append of the v1 build.
+
+## 2026-06-18 evening — Streamlit UI build, sample-click bug close, test recovery
+
+**Goal.** Add an analyst-facing Streamlit UI to Cedant, against the same `Retriever` + `AnswerGenerator` the eval harness uses. ~620 lines of `app.py` at repo root, custom CSS, citation-badge rendering, refusal-as-first-class-outcome, sample-query empty state, sidebar with model/top-k/filters, recent-queries history.
+
+**Verified working paths (live UI):**
+- PRA climate scenario analysis (single-doc reg): 38.2s, 17/5 cited, 0 halluc
+- Munich vs Swiss thermal coal (cross-doc synthesis): 27.2s, 10/5 cited, 0 halluc
+- Munich Re green bonds (single-doc corp): rendered correctly
+- Bermuda hurricane bond ratios (out-of-corpus): 1.6s refusal, 0 cited, 0 halluc
+
+**The bug: silent sample-click → Ask skip.** Sample-card click set `pending_query` and reran. On that rerun, `default_query = st.session_state.pop("pending_query", "")` populated the text area with the sample's text — visible to the user. On the next rerun (triggered by clicking Ask), `pending_query` had already been popped, so `default_query = ""`. Because the `st.text_area` was instantiated without an explicit `key=`, the widget reset to the new `value=""` rather than preserving its previously-rendered content. `query.strip() == ""` → `if ask and query.strip():` block skipped → no LLM call → empty page with no spinner, no error, no fan spin.
+
+**Diagnostic that broke the case open.** Jason observed the laptop fan did not spin up when Ask was clicked. With Gemma 4 31B IT running locally on oMLX, an actual LLM call always spins the fan. No fan = no compute = the script is not stuck mid-call, it is skipping the call entirely. This single physical observation invalidated a multi-hour software-side investigation that had been pursuing WebSocket timeouts, port conflicts, dark-mode CSS rendering, and Streamlit server-stale states. Lesson: when external physical evidence contradicts the software-side hypothesis, the physical evidence is the truth.
+
+**The fix.** Three-line pattern:
+1. Before any widget renders: `if "pending_query" in st.session_state: st.session_state.query_input = st.session_state.pop("pending_query")`.
+2. Initialise: `if "query_input" not in st.session_state: st.session_state.query_input = ""`.
+3. Widget uses `key="query_input"` (no `value=`).
+
+Also added: visible empty-query error card so the silent-skip class of bug can never recur without surface signal; `[cedant HH:MM:SS]` stderr logging on every state transition (sample click, pending_query transfer, Ask click with query_len, generator build, generator.answer call, answer received with metrics, exceptions).
+
+**Engineering failure: shipped without tests.** 600 lines of Streamlit, zero unit tests. The bug class — widget value reset across reruns when no key is set — is exactly what Streamlit's `streamlit.testing.v1.AppTest` framework exists to catch. The failure was deciding that the UI was "obviously simple" and skipping test discipline. Recovery: 12 AppTest-based tests added retroactively at `tests/test_app.py`. The load-bearing test is `test_sample_click_then_ask_invokes_generator`, which clicks a sample button, clicks Ask, and asserts `_FakeGenerator.last_call is not None`. Had this test existed before the UI was claimed working, the bug would have failed loudly inside CI rather than silently in the browser.
+
+**Follow-up: "New question" button.** Initial result-render path was a dead-end — once `current_result` was in session state, there was no affordance to clear it and return to the sample grid. Added a right-aligned "← New question" button above the question card that pops `current_result`, `current_top_k`, and `query_input` then reruns. +1 AppTest regression test (`test_new_question_button_clears_result_and_returns_to_empty_state`).
+
+**Final state.** 13 AppTest tests passing. 4 sample paths verified end-to-end in live UI. Commit `fc8a8e4` (`Streamlit UI: fix sample-click → Ask silent skip, add New question button, 13 AppTest regression tests`). 49 commits on v1 line.
+
+**Gremlins this session.**
+- Multiple file-landing failures. I delivered `app.py` and `tests/test_app.py` as downloads and assumed they had landed in the repo when they had not — `~/Downloads/` ≠ project directory until `cp` is run. Jason had to flag this twice ("see what happens when you undertake new steps 'while we wait for it to land', slow down one step at a time"). The discipline rule from the working-style memory (one command at a time, wait for confirmed output before proceeding) applies to file deliveries as much as to bash commands. Pattern correction: deliver one file, wait for confirmed `cp` and grep verification, then proceed.
+- Software-side hypothesis chase before noticing the fan signal. ~45 minutes investigating WebSocket / port / CSS issues that were not the bug.
+
+**Meta-lessons recorded.**
+- Streamlit `st.text_area` (and likely other widgets) without an explicit `key=` does not preserve user-modified or programmatically-set values when the `value=` parameter changes between reruns. Always pass `key=` when the widget participates in cross-rerun state, and prefer to manage the value through `st.session_state[key]` rather than `value=`.
+- AppTest (`streamlit.testing.v1.AppTest`) is the right tool for Streamlit UI testing. Monkey-patch the LLM-facing dependencies (Retriever, AnswerGenerator) with fakes; assert against `at.session_state`, `at.markdown`, and `at.button` after `at.run()`. Treat any non-trivial Streamlit surface as requiring AppTest coverage from the first commit, not as a follow-up.
+- Physical evidence about whether the LLM is running (fan spin, GPU utilisation, oMLX log lines) is faster ground-truth than chasing software-side symptoms when an LLM-driven feature appears broken.
+- When delivering files to the user, treat the `cp` from `~/Downloads/` into the project directory as a discrete confirmable step, not a side-effect of the delivery. Verify with `grep -c` for distinctive markers before proceeding.
