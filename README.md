@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/sycamore.png" alt="Cedant" width="280"/>
+</p>
+
 # Cedant — `underwriting-copilot`
 
 Local-first RAG copilot for reinsurance underwriting research. Hybrid retrieval over a regulatory + corporate-sustainability corpus, cited answers, and a falsification-designed evaluation harness.
@@ -78,7 +82,7 @@ Honestly noted, not buried:
 - **No LLM-as-judge for semantic correctness.** The eval measures whether the model cited the chunks we expected (structural correctness), not whether its prose accurately reflects them.
 - **Retrieval ceiling at ~25% miss rate** on the 70-question benchmark. Diagnosed (Q12: query/chunk language asymmetry on CLS-pooled dense embeddings); remediation deferred to v2 (Q13).
 - **Cross-document synthesis** scores below 0.25 mean citation recall across all evaluation cells. Not a supported primary use case in v1.
-- **No internal-document indexing.** Three synthetic Sycamore Reinsurance documents in `corpus/synthetic/` demonstrate the *kind* of internal content the system extends to, but they are not indexed in v1.
+- **No internal-document indexing.** Three synthetic Sycamore Reinsurance documents in `corpus/synthetic/` demonstrate the *kind* of internal content the system extends to, but they are not indexed in v1. The Sycamore Reinsurance mark above is the visual identity of that synthetic test corpus.
 
 `docs/governance.md` and `docs/evaluation.md` are explicit about scope, contracts, and limitations. The Quarto report's *Limitations and Future Work* section is the most accessible summary.
 
@@ -241,7 +245,7 @@ underwriting-copilot/
 ├── corpus/
 │   ├── real/                   # 6 source PDFs (PRA × 3, EIOPA × 1, Munich Re × 1, Swiss Re × 1)
 │   └── synthetic/              # 3 Sycamore Reinsurance documents (not indexed in v1)
-├── assets/                     # corpus mark, badges
+├── assets/                     # Sycamore Reinsurance corpus mark + badges
 ├── app.py                      # Streamlit analyst interface
 ├── launch_claude.sh            # dev-only: launch Claude Code against local oMLX
 └── scratch/                    # Qdrant index (gitignored)
