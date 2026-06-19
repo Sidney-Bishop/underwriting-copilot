@@ -11,12 +11,14 @@ A working proof-of-concept with structurally enforced citation and refusal contr
 - **A working RAG pipeline** over six public regulatory and corporate-sustainability PDFs, with structurally enforced citation discipline.
 - **A local Streamlit analyst interface** (`app.py`) that demonstrates the system end-to-end.
 - **An evaluation harness** (`eval/`) with a 70-question hand-crafted benchmark, a 2×2 sweep runner, and a deterministic report generator.
-- **A full Quarto technical report** at `publications/underwriting_copilot/` covering design, methodology, evaluation, limitations, and future work. **This is the primary entry point for a new reader.**
+- **A full Quarto technical report** at `publications/underwriting_copilot/` covering design, methodology, evaluation, limitations, and future work. **This is the primary entry point for a new reader.** Published online at **<https://cedant.netlify.app>**.
 - **A documentation set** (`docs/`) including append-only decision and journal logs.
 
 ## Reading the report
 
-The Quarto report is the polished, multi-audience write-up of the project. To preview it locally:
+The Quarto report is the polished, multi-audience write-up of the project. The latest published version is live at **<https://cedant.netlify.app>**.
+
+To preview it locally:
 
 ```bash
 cd publications/underwriting_copilot
@@ -34,6 +36,27 @@ uv run quarto render
 
 Output lands in `publications/underwriting_copilot/_output/`.
 
+### Publishing the report
+
+The published version at <https://cedant.netlify.app> is updated manually via the Netlify CLI. To redeploy after changes:
+
+```bash
+cd publications/underwriting_copilot
+uv run quarto render && netlify deploy --dir _output --prod
+```
+
+The two steps: rebuild the static HTML into `_output/`, then push that directory to Netlify's production URL. End-to-end ~30 seconds on a warm machine.
+
+**One-time setup (already done; recorded here so future-me does not redo it):**
+
+- Site created via `netlify init` from `publications/underwriting_copilot/` and linked to the `cedant` project on the `Jroche` Netlify team.
+- Publish directory is `_output` (overrides the Quarto default `_site` because `_quarto.yml` sets `output-dir: _output`).
+- Netlify CLI installed globally with `npm install -g netlify-cli`.
+- `.netlify/` is in the repo `.gitignore`; the local-site link state lives there.
+- No GitHub-Pages-style auto-deploy on push: every publish is an explicit local command. Code commits to `main` and report deploys to Netlify are deliberately decoupled.
+
+If `netlify deploy` ever errors with "site not linked", run `netlify link` from `publications/underwriting_copilot/` and pick `cedant` from the list.
+
 ---
 
 ## What works in v1
@@ -45,7 +68,7 @@ Output lands in `publications/underwriting_copilot/_output/`.
 - **Refusal contract:** exact-phrase refusal detector; **104/104 correct refusals** across the 4-cell sweep on a 26-question refusal benchmark covering out-of-corpus, adjacent-but-unanswered, and false-premise categories.
 - **Eval harness:** 70-question benchmark, 2 × 2 sweep runner (models × prompts), deterministic markdown report generator from raw JSONL.
 - **Analyst UI:** local Streamlit app rendering cited answers with green citation badges, red badges for hallucinated citations, and source cards beneath each answer.
-- **Technical report:** full Quarto report at `publications/underwriting_copilot/`.
+- **Technical report:** full Quarto report at `publications/underwriting_copilot/`, published online at <https://cedant.netlify.app>.
 
 ## What v1 does *not* do
 
@@ -67,6 +90,7 @@ Honestly noted, not buried:
 - Python 3.14 via [`uv`](https://docs.astral.sh/uv/).
 - oMLX running locally on port 8000 with `gemma-4-31B-it-MLX-6bit` and (optionally) `Qwen3.6-35B-A3B-4bit` available. See `docs/serving_local_models.md` for the oMLX setup.
 - [Quarto](https://quarto.org/docs/get-started/) installed locally if you want to render the technical report (optional — you can also read the source `.qmd` files directly in `publications/underwriting_copilot/sections/`).
+- [Netlify CLI](https://docs.netlify.com/cli/get-started/) installed globally if you want to redeploy the published report (optional; only needed for the publish step).
 - ~30 GB disk for the Qdrant index and model weights.
 
 ## Quickstart
@@ -174,7 +198,7 @@ The harness writes per-cell records incrementally to `raw.jsonl`; an interrupted
 
 ## Documentation map
 
-**For most readers, start with the Quarto report at `publications/underwriting_copilot/`.** It is the polished, multi-audience write-up of the project, written for both technical and business readers. The `docs/` tree below is the source-of-truth set the report is built from — useful for maintainers and deep-divers.
+**For most readers, start with the Quarto report at <https://cedant.netlify.app>** (or `publications/underwriting_copilot/` locally). It is the polished, multi-audience write-up of the project, written for both technical and business readers. The `docs/` tree below is the source-of-truth set the report is built from — useful for maintainers and deep-divers.
 
 Single-purpose docs. Find by the *kind* of information you have, not by topic.
 
@@ -192,7 +216,7 @@ Single-purpose docs. Find by the *kind* of information you have, not by topic.
 | `docs/backlog.md` | Fluid | What might come next | Cross off when done |
 | `docs/philosophy.md` | Guide | Why the docs are structured thus | Teaches; rarely edited |
 | `corpus/synthetic/README.md` | Guide | Demo internal documents (Sycamore Re) | Overwrite |
-| `publications/underwriting_copilot/` | Quarto report | Multi-audience technical write-up | Overwrite; preview with `quarto preview` |
+| `publications/underwriting_copilot/` | Quarto report | Multi-audience technical write-up | Overwrite; preview with `quarto preview`; publish with `netlify deploy --dir _output --prod` |
 
 **Routing rule** — where does a sentence go? *true now* → a State doc · *a choice someone will later question* → `decisions.md` · *something that happened* → `journal.md`.
 
@@ -209,10 +233,11 @@ underwriting-copilot/
 ├── docs/                       # state, decision, narrative, guide docs
 ├── publications/
 │   └── underwriting_copilot/   # Quarto technical report
-│       ├── _quarto.yml         # site config
+│       ├── _quarto.yml         # site config (output-dir: _output)
 │       ├── index.qmd           # landing page
 │       ├── images/             # report assets
-│       └── sections/           # 10 report sections + glossary + appendix
+│       ├── sections/           # 10 report sections + glossary + appendix
+│       └── _output/            # rendered static HTML (gitignored; netlify publish dir)
 ├── corpus/
 │   ├── real/                   # 6 source PDFs (PRA × 3, EIOPA × 1, Munich Re × 1, Swiss Re × 1)
 │   └── synthetic/              # 3 Sycamore Reinsurance documents (not indexed in v1)
@@ -226,6 +251,7 @@ underwriting-copilot/
 
 - Production model default is Gemma 4 31B IT (D015). Qwen3.6 35B A3B remains available via `UNDERWRITING_COPILOT_MODEL` for latency-budgeted workloads.
 - All inference is local: no outbound network calls in steady state. The eval and pipeline are deterministic at `temperature=0`.
+- The published report at <https://cedant.netlify.app> is the canonical reader-facing URL. The source `.qmd` files live under `publications/underwriting_copilot/sections/` and are the editable form.
 - The journal (`docs/journal.md`) is the unredacted version of what happened during development — including the two retracted-on-the-record findings that the report's *Experiments* and *Limitations* sections describe.
 
 ## Developer notes
