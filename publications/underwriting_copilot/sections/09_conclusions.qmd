@@ -116,7 +116,7 @@ The discipline has three moving parts:
   pass openly. A tidied conclusion would have been shorter; the
   honest one is more useful.
 
-For a Lead-level engineering role, this discipline is the deliverable
+This discipline is the deliverable
 the report is meant to demonstrate. It works the same way under
 positive evidence as under negative evidence — the same machinery
 that catches the family-axis retraction would catch a future v2
@@ -156,10 +156,10 @@ most of the gap they were originally posed against.
 
 ## A Note on What This Artefact Is For {#sec-conclusions-artefact}
 
-This report describes a five-day artefact built for a Lead
-Generative AI interview at a reinsurance firm. The five-day budget
+This report describes a proof of concept built for a Lead
+initial scope reinsurance underwriting copilot prototype. The budget
 is not an apology; it is the constraint that shapes everything in
-the report. Within five days a single engineer cannot ship a
+the report. Within initial scope a single engineer cannot ship a
 production-ready underwriting copilot. What can be shipped is
 evidence of how the engineer makes decisions under budget — what
 gets built, what gets rejected, what gets deferred, what gets

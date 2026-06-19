@@ -177,7 +177,7 @@ broaden this. It is recorded as a v2 work item.
 
 The 2×2 sweep tested two specific candidates because they were the
 ones that ran cleanly on the oMLX stack at a usable size during
-the five-day window. The Day-2 attempt at Gemma 4 12B was blocked
+the initial build. The Day-2 attempt at Gemma 4 12B was blocked
 at the `mlx_vlm` layer (Q9, closed-deferred). Other interesting
 models — Llama 3 70B variants, smaller Gemma sizes, the Qwen
 reasoning variants — were not in the survey.

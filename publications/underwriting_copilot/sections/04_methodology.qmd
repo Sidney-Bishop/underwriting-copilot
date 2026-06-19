@@ -152,7 +152,7 @@ The full multi-functionality was **not** used at v1, for two reasons:
   **dense-only**.
 - The alternatives — running BGE-M3 under PyTorch via FlagEmbedding,
   or under ONNX — both break the MLX-everywhere stack and add
-  dependency surface that is hard to justify against a five-day
+  dependency surface that is hard to justify against a initial
   budget.
 
 BM25 substitutes for BGE-M3's learned sparse head. At a 461-chunk

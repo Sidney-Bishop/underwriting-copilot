@@ -379,7 +379,7 @@ asymmetry is structural, not a tuning issue.
 ### Remediation deferred (Q13)
 
 Three remediation paths were scoped, each real engineering work
-outside the five-day budget:
+outside the scope of this initial build:
 
 1. **LLM query rewriting / HyDE.** Use the LLM to expand or rephrase
    the query before embedding. Estimated 1–2 hours of work plus
@@ -590,7 +590,7 @@ boundary of the evidence base.
   blocked at the mlx_vlm layer (Q9, closed-deferred). A broader
   survey — Llama 3 70B variants, smaller Gemma sizes, the Qwen
   reasoning variants — would strengthen generalisation but does
-  not fit the five-day budget.
+  not fit within scope.
 
 - **GEPA / DSPy systematic prompt optimisation (Q10).** After D014's
   hand-designed v2 closed most of the family-axis gap, the case

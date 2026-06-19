@@ -342,7 +342,7 @@ Reinsurance** (clearly labelled as synthetic in the metadata
 schema's `provenance = "synthetic"` field) to demonstrate
 structurally that the pipeline extends to internal-category
 content without requiring any real reinsurer to share confidential
-documents for an interview artefact.
+documents for an research artefact.
 
 In v1, however, these three documents are **drafted but not
 indexed**. They do not appear in the BM25 vocabulary, they are not
@@ -356,7 +356,7 @@ documents were partially indexed, eval numbers would be reported
 against a corpus that does not exist for any of the questions
 written before the synthetic documents were drafted, and the
 benchmark would need to be re-checked end-to-end to preserve
-gold-chunk references. Within the five-day budget, drafting the
+gold-chunk references. Within the initial build budget, drafting the
 synthetic documents (to show the pipeline scope) is preferred to
 indexing them (which would require a benchmark refresh that does
 not fit).
