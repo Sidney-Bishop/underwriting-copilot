@@ -7,7 +7,7 @@
 #   - verify oMLX is actually serving before launching (saves a confusing
 #     "connection refused" mid-session)
 #   - pin the model deliberately (the dashboard default has drifted to Qwen
-#     before; D005 says the trusted default is Gemma 31B + MTP)
+#     before; D015 says the trusted default is Gemma 31B + MTP)
 #
 # Usage:
 #   ./launch_claude.sh                 # uses the default model below

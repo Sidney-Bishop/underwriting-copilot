@@ -218,6 +218,7 @@ underwriting-copilot/
 │   └── synthetic/              # 3 Sycamore Reinsurance documents (not indexed in v1)
 ├── assets/                     # corpus mark, badges
 ├── app.py                      # Streamlit analyst interface
+├── launch_claude.sh            # dev-only: launch Claude Code against local oMLX
 └── scratch/                    # Qdrant index (gitignored)
 ```
 
@@ -226,6 +227,12 @@ underwriting-copilot/
 - Production model default is Gemma 4 31B IT (D015). Qwen3.6 35B A3B remains available via `UNDERWRITING_COPILOT_MODEL` for latency-budgeted workloads.
 - All inference is local: no outbound network calls in steady state. The eval and pipeline are deterministic at `temperature=0`.
 - The journal (`docs/journal.md`) is the unredacted version of what happened during development — including the two retracted-on-the-record findings that the report's *Experiments* and *Limitations* sections describe.
+
+## Developer notes
+
+Development of Cedant was assisted by Claude Code pointed at the same local oMLX endpoint Cedant uses at runtime. The launcher script `launch_claude.sh` encodes the setup — it unsets any cloud API key, verifies oMLX is serving, pins the default model (D015), and starts Claude Code with the right environment variables.
+
+This is a dev-time tool only; Cedant itself does not depend on it. A fresh cloner reproducing the pipeline (eval, Streamlit UI, report) does not need to touch it. A fresh cloner reproducing the dev workflow can run `./launch_claude.sh` after installing Claude Code (`npm install -g @anthropic-ai/claude-code`) and serving the candidate models in oMLX.
 
 ## License
 
