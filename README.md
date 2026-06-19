@@ -4,6 +4,12 @@
 
 # Cedant — `underwriting-copilot`
 
+[![Python](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![Model](https://img.shields.io/badge/model-Gemma_4_31B_IT-green.svg)
+![Inference](https://img.shields.io/badge/inference-oMLX-orange.svg)
+[![Report](https://img.shields.io/badge/report-live-success.svg)](https://cedant.netlify.app)
+
 Local-first RAG copilot for reinsurance underwriting research. Hybrid retrieval over a regulatory + corporate-sustainability corpus, cited answers, and a falsification-designed evaluation harness.
 
 A working proof-of-concept with structurally enforced citation and refusal contracts.
