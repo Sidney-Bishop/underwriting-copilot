@@ -1,0 +1,38 @@
+[theme]
+# Force light mode so the system dark-mode preference doesn't
+# half-style the app.
+base = "light"
+primaryColor = "#1e40af"
+backgroundColor = "#fafafa"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+font = "sans serif"
+
+[server]
+# No hot-reload during a demo. The polling-based file watcher (no
+# Watchdog installed) was triggering reconnect loops mid-LLM-call.
+runOnSave = false
+fileWatcherType = "none"
+
+# WebSocket hygiene — turn off everything optional to reduce moving
+# parts during the 30-60s answer calls.
+enableWebsocketCompression = false
+enableXsrfProtection = false
+enableCORS = false
+
+# Larger ceiling on the websocket message; verbose answers with
+# many citations can be substantial after HTML expansion.
+maxMessageSize = 500
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = true
+# Hide the "Deploy" prompt and the hamburger menu — cleaner demo.
+toolbarMode = "minimal"
+
+[runner]
+# Don't pre-cancel reruns; let the current run finish before starting
+# a new one. Helps when the LLM call is mid-flight.
+fastReruns = false
