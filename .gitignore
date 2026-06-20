@@ -26,7 +26,8 @@ scratch/
 graphify-out/
 
 # Eval sweep outputs
-eval/results/
+eval/results/*
+!eval/results/2026-06-18T15-32-07Z/
 
 # Local Netlify folder
 .netlify

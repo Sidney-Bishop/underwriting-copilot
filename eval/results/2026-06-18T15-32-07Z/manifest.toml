@@ -1,0 +1,71 @@
+# Manifest for the canonical v1.0 baseline sweep.
+#
+# Retrofit, authored 2026-06-20 from existing raw.jsonl + report.md
+# + git history. Not produced at run time. Subsequent runs starting
+# from Q14 Phase 2c should write their manifests at sweep time.
+#
+# ---- Schema ----
+#
+# [run]
+#   timestamp, git_commit, git_branch, description, retrofit (bool)
+# [benchmark]
+#   path, n_questions, n_answerable, n_refusal
+# [[cells]]
+#   id, model, prompt_version, use_hyde
+#   id convention: <model_slug>_<prompt_version>[_hyde[_<promptid>]]
+#   e.g. gemma_v2 (use_hyde=false implicit), gemma_v2_hyde (CONSTRAINED implicit)
+# [retriever]
+#   top_k, rrf_k, candidates_per_channel, exclude_superseded
+# [hyde]
+#   present only when any cell has use_hyde = true
+#
+# See ``eval/compare.py`` for how the manifest is consumed.
+
+[run]
+timestamp = "2026-06-18T15:32:07Z"
+git_commit = "3e2ff7f"
+git_branch = "main"
+retrofit = true
+description = """
+Canonical v1.0 baseline sweep. Four cells (Gemma×v1, Gemma×v2,
+Qwen×v1, Qwen×v2) on the N=70 benchmark. Source of the numbers
+in Section 6 of the v1.0 Quarto report and the v1.0.0 / v1.0.1
+release tags. Mean citation_recall = 0.598 on the production-default
+cell (gemma_v2). Zero hallucinated citations. 26/26 refusals correct.
+"""
+
+[benchmark]
+path = "eval/benchmark.toml"
+n_questions = 70
+n_answerable = 44
+n_refusal = 26
+
+[[cells]]
+id = "gemma_v1"
+model = "gemma-4-31B-it-MLX-6bit"
+prompt_version = "v1"
+use_hyde = false
+
+[[cells]]
+id = "gemma_v2"
+model = "gemma-4-31B-it-MLX-6bit"
+prompt_version = "v2"
+use_hyde = false
+
+[[cells]]
+id = "qwen_v1"
+model = "Qwen3-Coder-30B-A3B-Instruct-MLX-6bit"
+prompt_version = "v1"
+use_hyde = false
+
+[[cells]]
+id = "qwen_v2"
+model = "Qwen3-Coder-30B-A3B-Instruct-MLX-6bit"
+prompt_version = "v2"
+use_hyde = false
+
+[retriever]
+top_k = 5
+rrf_k = 60
+candidates_per_channel = 50
+exclude_superseded = true
