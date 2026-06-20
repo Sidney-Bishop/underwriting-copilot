@@ -1301,3 +1301,140 @@ Also added: visible empty-query error card so the silent-skip class of bug can n
 - The proper long-term fix for LLM-output rendering quirks is at the prompt layer (`SYSTEM_PROMPT` in `answer.py`: *"each list item on its own line, blank line before the list"*), not the renderer layer. The renderer-side normalisation should remain as defensive belt-and-braces. Pending follow-up: Q-question for v2 — does updating the prompt regress eval scores on the N=70 benchmark? If not, prompt-side fix is preferable to brittle regex maintenance.
 
 - Document conventions are not enforcement. Yesterday's journal recorded the file-landing gremlin explicitly. Today the same gremlin recurred. Writing it down is necessary but not sufficient; the prevention has to be procedural (numbered cp commands per file, explicit verification that every delivered file has a corresponding placement step).
+
+## 2026-06-20 — Q13 HyDE spike, Phase 1 diagnostic
+
+Started work on `v2.0-dev/q13-hyde-spike`, the feature branch for the
+LLM query rewriting (HyDE) candidate identified in Q13 as the
+strongest of the three documented remediation paths for the Q12
+query/chunk language asymmetry. Baseline-first session — no
+implementation yet; the goal was to identify and classify retrieval
+failures honestly before any new code is written.
+
+### Work done
+
+**Phase 1a** — `scripts/probes/q13_baseline_misses.py`. Reads the
+committed canonical run (`eval/results/2026-06-18T15-32-07Z/raw.jsonl`),
+filters to the production-default cell (Gemma 4 31B IT × prompt v2),
+classifies the 44 answerable questions into strict miss / partial
+miss / full retrieval.
+
+Initial version had two schema bugs: assumed benchmark TOML used
+`[[questions]]` (plural) where the file uses `[[question]]` (singular);
+assumed records had a rich `used_chunks` field with chunk payloads,
+where records actually use a flat `retrieved_chunk_ids` list of strings.
+The first run reported a 100% miss rate. This obviously could not
+reconcile to the `mean_recall = 0.598` published in Section 6 of the
+v1.0 report, so the script was wrong, not the data. Both assumptions
+fixed; re-ran:
+
+- **11 strict** misses (no gold chunk retrieved) — 25.0%
+- **10 partial** misses (some but not all gold retrieved) — 22.7%
+- **23 full** retrievals — 52.3%
+
+Reconciles to `mean_recall = 0.598` within rounding.
+
+**Phase 1b** — `scripts/probes/q13_strict_misses_with_text.py`. Same
+classification logic plus Qdrant chunk-text lookup for the 11 strict
+misses. Uses the same `QdrantClient(path=str(qdrant_path))` pattern as
+`src/underwriting_copilot/retrieve.py` in production. Output saved to
+`scratch/q13_phase1b.txt` (gitignored).
+
+Read all 11 strict misses with full text in hand. Classified each
+miss by mechanism with both gold and retrieved chunk text in front of
+us, rather than from chunk-id slug inference. This was a deliberate
+methodology choice — classification from slugs alone (which is where
+this session opened) would not have stood up to scrutiny, and indeed
+produced a classification that differed materially from the
+text-based one.
+
+### Findings
+
+**Finding 1 — Strict-miss classification (with chunk text)**
+
+The 11 strict misses divide along three mechanisms, not the binary
+"paraphrase vs. cross-doc" framing the session opened with:
+
+| QID  | Mechanism                                                                                 | HyDE-fixable?            |
+|------|-------------------------------------------------------------------------------------------|--------------------------|
+| q001 | Topic dominance (query topic "climate-related risks" dominates over scope intent)         | Yes                      |
+| q004 | Surface match exists but missed (unexpected)                                              | Yes; needs investigation |
+| q013 | Cross-issuer interference (Swiss Re returned over Munich Re)                              | Yes                      |
+| q042 | Cross-document needing query decomposition (one-from-each-doc retrieval)                  | Probably not             |
+| q044 | Gold-labelling tightness (Swiss Re gold is *insurability*, query asks about *products*)   | No — gold-labelling      |
+| q046 | Gold-labelling tightness (Swiss Re gold is thermal coal, not scenario governance)         | No — gold-labelling      |
+| q047 | Gold-labelling tightness (Swiss Re gold is narrow metrics chunk; broader chunks retrieved)| No — gold-labelling      |
+| q051 | Topic dominance ("sustainability ambition" pulled away from specific decarb chunk)        | Yes                      |
+| q053 | Gold-labelling tightness (gold chunks are topic-narrow; retrieved chunks also relevant)   | No — gold-labelling      |
+| q055 | Surface match exists but missed (ORSA matches gold literally)                             | Yes; needs investigation |
+| q056 | Surface match exists but missed (credit risk matches gold literally)                      | Yes; needs investigation |
+
+**Finding 2 — Gold-labelling tightness on 4 of 11 strict misses**
+
+q044, q046, q047, q053 are not retrieval failures. The retrieved
+chunks arguably answer the question; the gold tags are narrow choices
+that do not reflect the only valid answers. This means the published
+`mean_recall = 0.598` for the production-default cell understates the
+system's true retrieval quality.
+
+Section 6 of the v1.0 report does not acknowledge this. Opened as
+Q15 for review and resolution.
+
+**Finding 3 — Embedding pathology on q004, q055, q056**
+
+Three of the strict misses (q004, q055, q056) have gold chunks with
+near-perfect lexical match to the query. q055 query says "Own Risk
+and Solvency Assessment" and the gold chunk slug is
+`__0049__own-risk-and-solvency-assessment-orsa` with paragraph 4.124
+literally about ORSA and climate. q056 query says "climate-related
+credit risk specifically" and the gold chunk slug is `__0043__credit-risk`
+with paragraph 4.112 literally about banks' climate credit risk.
+
+These should have hit on dense, sparse, or both, and yet retrieval
+missed all three. The mechanism is not paraphrase asymmetry as
+described in Q12. Worth deeper investigation in parallel with the
+HyDE work — possibly a chunk-content boundary issue or an embedding
+artefact specific to these chunks.
+
+### Decisions
+
+- **Q14 falsification criterion narrowed**: from "HyDE must recover N
+  of 11 strict misses" to "HyDE must recover at least 4 of 6
+  mechanism-clear misses (q001, q004, q013, q051, q055, q056)". The
+  4 gold-labelling misses (q044, q046, q047, q053) cannot fairly be
+  charged to HyDE; q042 is a different remediation path (query
+  decomposition).
+- **Q15 opened** for the gold-labelling review on q044, q046, q047,
+  q053. Independent of HyDE work but should resolve before Q14's
+  final evaluation to avoid confounding.
+- **HyDE remains v2.0 lead candidate** for Q13 retrieval remediation.
+  Instruct-tuned embeddings and dictionary expansion stay deferred.
+- **Query decomposition** noted as future work (likely Q16 or beyond),
+  informed by q042 and any other cross-document failures that surface.
+
+### Procedural / governance observations
+
+- **100% miss rate bug caught by sanity-check, not code inspection.**
+  The diagnostic output was at odds with established v1.0 numbers
+  (0.598 mean recall), so the diagnostic was more likely wrong than
+  the baseline. Stopping to investigate before classifying misses
+  saved downstream analysis from being polluted. Worth recording as
+  a pattern: when a probe's output disagrees with a published
+  baseline, investigate the probe before investigating the baseline.
+
+- **`scripts/probes/dump_chunks.py` referenced but missing.** The
+  `eval/benchmark.toml` header (line 27) refers to a
+  `scripts/probes/dump_chunks.py` script that produced a TSV used to
+  hand-author the gold chunk IDs. The script does not exist in the
+  working tree, and no chunk-dump TSV is committed. Either the script
+  was deleted post-use without updating the benchmark header, or the
+  header documents an intention that was not realised. Not a crisis.
+  Cleaner fix is to either restore the script or remove the
+  reference. Backlog item.
+
+### Files created (on v2.0-dev/q13-hyde-spike branch)
+
+- `scripts/probes/q13_baseline_misses.py`
+- `scripts/probes/q13_strict_misses_with_text.py`
+- `scratch/q13_phase1b.txt` (gitignored — diagnostic output, 11 strict
+  misses with gold and retrieved chunk text)
