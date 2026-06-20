@@ -27,3 +27,6 @@ graphify-out/
 
 # Eval sweep outputs
 eval/results/
+
+# Local Netlify folder
+.netlify

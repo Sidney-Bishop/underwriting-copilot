@@ -302,6 +302,12 @@ uv run streamlit run app.py \
   --server.address 127.0.0.1
 ```
 
+::: {#fig-streamlit-example}
+![](../images/streamlit_example.png){fig-alt="The Cedant Streamlit interface showing a cited answer to a PRA SS5/25 question on climate scenario analysis, with inline numbered citation badges, a metrics strip, and a source card with the verbatim chunk text."}
+
+The Streamlit interface answering a PRA SS5/25 question on climate scenario analysis. Inline numbered citation badges link each claim in the prose to a specific chunk. The metrics strip below the answer reports the model (Gemma), wall-clock latency for this query (51.9 seconds — above the ~22.9-second mean reported in Section 6 for the production-default cell), citations resolved against retrieved chunks (19 cited from 5 retrieved), and the hallucination count (zero). The first source card shows the chunk identifier `pra_ss5-25_climate__0027__role-of-scenario-analysis` and the verbatim chunk text the model worked from; further cards (not shown) carry the remaining retrieved chunks. The sidebar exposes the model selector, retrieval top-k, the supersession filter (default on per D012), and optional issuer-type and jurisdiction filters. The Sycamore Reinsurance test-corpus mark in the sidebar footer is labelled explicitly as a synthetic issuer, not a real entity.
+:::
+
 The UI's purpose is rendering, not generation. It instantiates the
 same `Retriever` and `AnswerGenerator` the eval uses, calls
 `gen.answer(query)` on user input, and renders the resulting
