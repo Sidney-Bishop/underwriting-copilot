@@ -1,0 +1,36 @@
+[run]
+timestamp = "2026-06-20T12:50:24Z"
+git_commit = "18faa73"
+git_branch = "v2.0-dev/q13-hyde-spike"
+retrofit = false
+description = """
+Q14 Phase 2c falsification run. Single cell: gemma_v2 with partial
+HyDE (CONSTRAINED prompt for dense channel, original query for sparse).
+70 questions. Compared against the canonical 2026-06-18 baseline.
+Falsification criterion: at least 4 of 5 mechanism-clear misses
+(q001, q004, q051, q055, q056) recovered, AND no new strict misses
+among the 23 currently-full questions. See docs/journal.md 2026-06-20.
+"""
+
+[benchmark]
+path = "eval/benchmark.toml"
+n_questions = 70
+n_answerable = 44
+n_refusal = 26
+
+[[cells]]
+id = "gemma_v2_hyde"
+model = "gemma-4-31B-it-MLX-6bit"
+prompt_version = "v2"
+use_hyde = true
+
+[retriever]
+top_k = 5
+rrf_k = 60
+candidates_per_channel = 50
+exclude_superseded = true
+
+[hyde]
+prompt_id = "CONSTRAINED"
+rewriter_model = "gemma-4-31B-it-MLX-6bit"
+rewriter_max_tokens = 250

@@ -1705,3 +1705,198 @@ c6597f9  merge: v1.0.1 patches
 
 Not pushed. The branch becomes shareable after Phase 2c lands
 with the falsification result and a comparison summary.
+
+### Phase 2c result — Q14 falsifies at 3/5 on the stated criterion
+
+The full production-default cell ran in 1562 seconds (26m). Output at
+`eval/results/2026-06-20T12-50-24Z/`. Compared against the canonical
+2026-06-18 baseline via `eval/compare.py` (see also
+`scratch/q14_phase2c_compare.txt`).
+
+### Headline
+
+**Q14 falsifies.** The criterion stated this morning -- before evidence
+-- was "at least 4 of 5 mechanism-clear misses recovered, AND no new
+strict misses among the 23 currently-full questions". Result:
+
+- **Half 1 -- mechanism-clear recovery: 3 of 5.** Below threshold.
+  - q001 ✓ recovered (0.00 → 1.00)
+  - q004 ✓ recovered (0.00 → 1.00)
+  - q055 ✓ recovered (0.00 → 1.00)
+  - q051 ✗ not recovered (0.00 → 0.00)
+  - q056 ✗ not recovered (0.00 → 0.00)
+- **Half 2 -- no new strict misses: passes.** 0 new strict misses on
+  the 23 currently-full questions. Two partial regressions (q005, q041)
+  documented below; neither dropped to a strict miss.
+
+Q14 cannot be reframed as passing without retrofitting the criterion.
+The pre-registration was the point. q051 and q056 are *candidates*
+for Q15 inclusion based on the diagnostic pattern in this entry, but
+their formal inclusion in Q15 requires chunk-text inspection on its
+own merits -- not as a Q14 rescue.
+
+### Aggregate result
+
+Despite the binary falsification, the aggregate movement is real and
+positive:
+
+| Metric                       | Baseline | Phase 2c | Delta  |
+|------------------------------|----------|----------|--------|
+| mean_retrieval_recall        | 0.633    | 0.684    | +0.051 |
+| mean_citation_recall         | 0.598    | 0.653    | +0.055 |
+| hallucinated_citations_total | 0        | 0        | +0     |
+| refusal_correct              | 26/26    | 26/26    |  -     |
+| mean_latency_s               | 17.561   | 22.318   | +4.758 |
+
+Partial HyDE improves both retrieval and citation recall by ~5
+percentage points without introducing any hallucinations or breaking
+refusal correctness. The cost is ~27% additional wall-clock per query
+(the extra LLM call to generate the HyDE passage). Worth recording as
+a candidate v2.0 improvement independent of Q14's binary outcome.
+
+### Diagnostic detail on the failures
+
+**q051 (Munich Re decarbonisation/ambition)** -- not recovered.
+Retrieved chunks are all Munich Re sustainability report (zero
+cross-issuer contamination, which HyDE fixed) but the gold chunks
+`__0075__decarbonisation-approach-to-investments` and
+`__0151__munich-re-group-ambition-2025-and-beyond` are absent. Top-5
+surfaced adjacent Munich Re chunks: voluntary commitments,
+environmental management, liabilities, sustainability in investment
+strategy, employees. The model produced a plausible answer citing
+"Ambition 2025" by name from the retrieved chunks. Pattern: right
+document, adjacent chunks ranked above gold.
+
+**q056 (PRA SS5/25 climate-related credit risk)** -- not recovered.
+All 5 retrieved chunks are PRA SS5/25 (right document). None is the
+specific gold chunk `__0043__credit-risk`; instead the retriever
+surfaced financial-reporting, business-strategy,
+counterparty-exposure, risk-identification, and regulatory-balance-sheet
+chunks -- all valid aspects of climate-risk supervision under SS5/25.
+The model cited 4 of the 5 retrieved chunks and produced a plausible
+answer. Pattern: right document, adjacent aspects ranked above gold.
+This was *not* predicted (the morning entry expected q056 to recover
+under partial HyDE; it didn't).
+
+**q005 (PRA scenario analysis, 4 gold chunks)** -- partial regression
+(1.00 → 0.75). Retrieved 3 of 4 gold chunks in top-5 (ranks 1, 3, 5).
+The 4th gold chunk dropped just outside top-5. With multiple gold
+chunks competing for 5 slots, any reshuffling can drop one. This is
+a density problem in the falsification framing, not a retrieval
+failure -- HyDE found more multi-chunk gold than the baseline did per
+slot competed for, but lost one.
+
+**q041 (Munich Re + Swiss Re fossil-fuel thresholds, cross-doc)** --
+partial regression (1.00 → 0.50). Retrieved the Swiss Re gold at rank
+3; the Munich Re gold `__0100__defined-exclusion-criteria` is missing.
+Instead, the top Munich Re hit is `__0054__oil-and-gas` -- Munich Re's
+oil-and-gas policy chunk, adjacent to the gold's "defined-exclusion"
+theme. Same pattern as q013, q051, q056. Importantly, this is the
+*same* Munich Re chunk (`__0100__defined-exclusion-criteria`) that
+q013 retrieved as its top hit in Phase 2a's HyDE probe. The mechanism
+repeats.
+
+### Predictions vs evidence
+
+The morning entry stated three predictions before this run. Honest
+calibration check:
+
+1. **"Most likely: partial HyDE performs at least as well as full HyDE
+   on the mechanism-clear set."** **Falsified.** Full HyDE in Phase 2a
+   recovered q051 and q056 (5/6 on the probe set). Partial HyDE in
+   Phase 2c failed both. The directional claim that partial HyDE would
+   match or exceed full HyDE was wrong. Preserving the original
+   query's named-entity signal on sparse did not compensate for the
+   loss of HyDE's effect on the sparse channel for these two
+   questions.
+2. **"Lower risk: no new strict misses among the 23 currently-full
+   questions."** **Confirmed.** Two partial regressions (q005, q041);
+   zero strict misses.
+3. **"Non-zero risk: q051 might move under partial HyDE due to sparse
+   interference."** **Confirmed directionally.** q051 stayed missed.
+   The specific mechanism (sparse channel dragging fused ranking
+   toward different Munich Re chunks) is plausible but cannot be
+   verified without per-channel rank data (`dense_rank` and
+   `sparse_rank` are on `RetrievalHit` but not exposed in
+   `raw.jsonl` -- backlog).
+
+Net: 1 of 3 predictions falsified. The falsified one was the
+optimistic prediction; the cautious ones held. This pattern (cautious
+predictions confirmed, optimistic prediction wrong) is what honest
+calibration looks like.
+
+### The gold-labelling tightness finding strengthens
+
+Phase 1b classified 4 strict misses (q044, q046, q047, q053) as
+gold-labelling tightness. Phase 2a re-classified q013 from
+cross-issuer interference to the same pattern (HyDE solved cross-issuer
+contamination but the gold chunk `__0053__thermal-coal` still lost
+to `__0100__defined-exclusion-criteria`). Phase 2c now shows the
+same pattern on q051, q056, and q041's Munich Re side.
+
+That brings the gold-labelling tightness count to **potentially 8 of
+the 11 original strict misses** (q013, q044, q046, q047, q051, q053,
+q056, plus q041's Munich Re half). If 8 of 11 strict misses are
+gold-labelling artefacts rather than retrieval failures, the v1.0
+report's `mean_citation_recall = 0.598` for the production-default
+cell understates the system's true retrieval quality by a substantial
+margin.
+
+This is Finding 2 from this morning's entry, dramatically reinforced.
+Q15's resolution becomes more consequential.
+
+**Important constraint:** these are *candidates* for Q15. Each must be
+confirmed by chunk-text inspection on its own merits before
+reclassification. Treating "this looks like the pattern" as
+reclassification is exactly the post-hoc rescue the morning entry
+warned against.
+
+### Decisions
+
+- **Q14 falsified, no retroactive criterion change.** Record stands
+  as 3/5 mechanism-clear recovery, below the 4/5 threshold. Q14 is
+  not the v2.0 retrieval remediation path *as a clean win on the
+  documented mechanism*.
+- **Partial HyDE remains a viable v2.0 candidate** on the aggregate
+  improvement: +5.1pp retrieval recall, +5.5pp citation recall, zero
+  hallucination/refusal regressions, ~27% latency cost. Ship decision
+  deferred to v2.0 release boundary; not made tonight.
+- **Q15 scope expansion candidates:** q013 (already in Q15), q051,
+  q056, plus q041's Munich Re half. Each requires independent
+  chunk-text review. If Q15 confirms reclassification, the v1.0
+  baseline `mean_citation_recall = 0.598` becomes a conservative
+  understatement and Section 6 of the report should be updated.
+- **`dense_rank` and `sparse_rank` exposure in `raw.jsonl`** added
+  to backlog. Per-channel rank data would have settled the sparse
+  interference question on q051 directly.
+- **HyDE prompt design lesson:** the CONSTRAINED prompt is producing
+  on-shape passages (confirmed Phase 2a) and giving the dense channel
+  better neighbourhoods (confirmed by aggregate +5pp). The remaining
+  failures are not in the prompt's output quality but in what
+  *retrieval over BGE-M3 + RRF* can do with a good passage when
+  several chunks within the same document are semantically adjacent
+  to the question.
+
+### Files committed for this entry
+
+- `eval/results/2026-06-20T12-50-24Z/manifest.toml`
+- `eval/results/2026-06-20T12-50-24Z/raw.jsonl`
+- `eval/results/2026-06-20T12-50-24Z/run_meta.json`
+- `.gitignore` carveout for the new directory
+
+### Next concrete steps
+
+- Q15 chunk-text review on the new candidates (q051, q056, q041's
+  Munich Re half) plus the existing 4 (q044, q046, q047, q053) and
+  q013. Resolution depends on whether the gold tags can be defended
+  as the *only* valid answers or are reasonably widened to include
+  the retrieved adjacent chunks.
+- Decision on partial HyDE shipping for v2.0: defer to release
+  boundary. The result will be more interpretable after Q15's
+  outcome -- if Q15 confirms reclassification, the "Q14 failed but
+  partial HyDE improves aggregate" framing becomes more nuanced.
+- Embedding diagnostic (the original Finding 3 lexical-match cases
+  q004/q055/q056): mostly closed -- q004 and q055 recovered under
+  partial HyDE in Phase 2c; q056 did not, and its failure is
+  characterised here as gold-labelling tightness, not embedding
+  pathology. Backlog item can be downgraded.

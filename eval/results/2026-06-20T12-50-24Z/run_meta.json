@@ -1,0 +1,19 @@
+{
+  "completed": true,
+  "timestamp_utc": "2026-06-20T12-50-24Z",
+  "elapsed_seconds": 1562.31,
+  "models": [
+    "gemma-4-31B-it-MLX-6bit"
+  ],
+  "prompts": [
+    "v2"
+  ],
+  "benchmark_path": "eval/benchmark.toml",
+  "question_count": 70,
+  "total_cells": 70,
+  "error_cells": 0,
+  "top_k": 5,
+  "limit": null,
+  "question_ids": null,
+  "use_hyde": true
+}
