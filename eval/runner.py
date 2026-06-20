@@ -46,6 +46,7 @@ from eval.scorer import (
 )
 from underwriting_copilot.answer import AnswerGenerator
 from underwriting_copilot.retrieve import Retriever
+from underwriting_copilot.query_rewriter import QueryRewriter
 
 
 # ---- Defaults ----------------------------------------------------------
@@ -78,6 +79,7 @@ def try_answer_with_retry(
     max_retries: int = MAX_RETRIES,
     retry_delay: float = RETRY_DELAY_SECONDS,
     sleep_fn=time.sleep,
+    use_hyde: bool = False,
 ):
     """Call ``generator.answer(query)`` with bounded retry.
 
@@ -95,7 +97,7 @@ def try_answer_with_retry(
     last_error: str | None = None
     for attempt in range(max_retries + 1):
         try:
-            return generator.answer(query, top_k=top_k), None
+            return generator.answer(query, top_k=top_k, use_hyde=use_hyde), None
         except httpx.HTTPStatusError as e:
             last_error = (
                 f"HTTP {e.response.status_code} on attempt "
@@ -169,6 +171,7 @@ def run_sweep(
     top_k: int = DEFAULT_TOP_K,
     prompt_registry: dict[str, str] | None = None,
     generator_factory=None,  # for tests
+    use_hyde: bool = False,
 ) -> Iterator[tuple[dict[str, Any], SweepProgress]]:
     """Yield ``(cell_record, progress)`` pairs as cells complete.
 
@@ -196,7 +199,7 @@ def run_sweep(
             for question in questions:
                 cell_index += 1
                 result, error = try_answer_with_retry(
-                    generator, question.query, top_k=top_k
+                    generator, question.query, top_k=top_k, use_hyde=use_hyde
                 )
                 if error is not None:
                     record = make_error_record(
@@ -304,6 +307,12 @@ def _build_argparser() -> argparse.ArgumentParser:
         default=None,
         help="Comma-separated question IDs to include. Default: all questions.",
     )
+    p.add_argument(
+        "--use-hyde",
+        action="store_true",
+        help="Enable HyDE query rewriting on the dense channel (Q14). "
+             "Original query continues to feed the sparse channel.",
+    )
     return p
 
 
@@ -379,11 +388,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  All {sum(len(q.gold_chunk_ids) for q in questions)} gold "
           f"chunk references reconciled.", file=sys.stderr)
 
+    query_rewriter = None
+    if args.use_hyde:
+        print("HyDE enabled — constructing QueryRewriter.", file=sys.stderr)
+        query_rewriter = QueryRewriter()
+
     print("Initialising retriever...", file=sys.stderr)
     retriever = Retriever(
         qdrant_path=qdrant_path,
         vocab_path=repo_root / "corpus" / "bm25_vocab.json",
         verbose=False,
+        query_rewriter=query_rewriter,
     )
 
     # Output directory
@@ -413,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
                 models=args.models,
                 prompt_names=args.prompts,
                 top_k=args.top_k,
+                use_hyde=args.use_hyde,
             ):
                 fp.write(json.dumps(record) + "\n")
                 fp.flush()  # incremental persistence
@@ -435,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
             "top_k": args.top_k,
             "limit": args.limit,
             "question_ids": args.question_ids,
+            "use_hyde": args.use_hyde,
         }
         with open(meta_path, "w") as fp:
             json.dump(meta, fp, indent=2)

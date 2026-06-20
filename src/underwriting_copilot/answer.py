@@ -346,6 +346,7 @@ class AnswerGenerator:
         exclude_superseded: bool = True,
         issuer_type: str | None = None,
         jurisdiction: str | None = None,
+        use_hyde: bool = False,
     ) -> AnswerResult:
         """Run the full retrieve → prompt → LLM → validate pipeline.
 
@@ -365,6 +366,7 @@ class AnswerGenerator:
             exclude_superseded=exclude_superseded,
             issuer_type=issuer_type,
             jurisdiction=jurisdiction,
+            use_hyde=use_hyde,
         )
 
         if not hits:

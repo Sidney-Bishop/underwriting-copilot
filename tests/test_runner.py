@@ -104,7 +104,7 @@ class _CountingFakeGenerator:
         self.fail_with = fail_with or _http_status_error(500)
         self.call_count = 0
 
-    def answer(self, query, top_k=5):
+    def answer(self, query, top_k=5, **kwargs):
         self.call_count += 1
         if self.call_count <= self.fail_times:
             raise self.fail_with
@@ -484,7 +484,7 @@ class TestRunSweep:
         def factory(retriever, model, system_prompt):
             gen = MagicMock()
 
-            def fake_answer(query, top_k=5):
+            def fake_answer(query, top_k=5, **kwargs):
                 # Fail on q1 (first call across the two questions),
                 # succeed on q2. fail_times=99 isn't right here because
                 # the same generator handles both questions.
