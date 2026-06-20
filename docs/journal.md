@@ -1577,3 +1577,131 @@ adding `use_hyde: bool` to `Retriever.retrieve()`. The CONSTRAINED
 prompt is the one we commit to in the module. Tests for the
 rewriter in isolation before the integration goes near the eval
 harness.
+
+### Evening session — Q14 Phase 2b shipped
+
+The QueryRewriter module and the `use_hyde` flag on
+`Retriever.retrieve()` landed in commit `65b26b5`. Full test suite
+remains green: **343 passed in 3.28s, zero regressions** on the
+158+ pipeline tests that exercise the production retrieval path.
+The default value of `use_hyde=False` makes the change opt-in;
+every existing caller (eval harness, Streamlit, CLI demo) sees
+byte-equivalent behaviour.
+
+### What shipped
+
+- `src/underwriting_copilot/query_rewriter.py` (169 lines).
+  `QueryRewriter` class with `rewrite(query) -> str`. Module
+  constants mirror `answer.py`'s style (DEFAULT_MODEL,
+  MODEL_ENV_VAR, DEFAULT_API_BASE, etc.) so the rewriter and the
+  answer generator share configuration surface. CONSTRAINED_PROMPT
+  committed verbatim from `scripts/probes/q14_hyde_prompt_probe.py`
+  with a docstring note that changes invalidate previously recorded
+  HyDE eval runs.
+- `tests/test_query_rewriter.py` (214 lines, 18 tests). All HTTP
+  mocked via `httpx.MockTransport`. Covers model-resolution
+  precedence (4), constructor wiring (3), `rewrite()` success path
+  (4), and `rewrite()` error paths (7). Runs in 0.08s.
+- `src/underwriting_copilot/retrieve.py` (+33 lines). New
+  constructor param `query_rewriter: QueryRewriter | None = None`;
+  new `retrieve()` parameter `use_hyde: bool = False`; new
+  HyDE-routing block at the top of `retrieve()` that builds a
+  separate `dense_query` when `use_hyde=True`. The single
+  substantive code change is `embed_text(..., query)` →
+  `embed_text(..., dense_query)`; the sparse channel is untouched.
+
+### Design decisions made today
+
+**Partial HyDE (passage on dense channel only).** The hypothetical
+passage feeds the dense (BGE-M3) embedding; the original query
+continues to feed BM25 on the sparse channel. This is a deliberate
+departure from canonical HyDE (Gao et al., 2022), which replaces
+the query everywhere. Rationale: regulatory and corporate-doc
+chunks are full of named instruments and identifiers (SS5/25, ORSA,
+ICAAP, NZAOA, Ambition 2025) that BM25 catches reliably and that
+HyDE passages may or may not preserve verbatim. Splitting the
+channels keeps the exact-match signal intact while letting the
+dense embedding benefit from register-matched paraphrase. Worth
+flagging explicitly because the Phase 2a probe used a different
+configuration -- see *Open prediction* below.
+
+**Raw `httpx`, matching `answer.py`.** The rewriter could have
+adopted the OpenAI Python SDK (cleaner client, typed responses,
+built-in retries), but `answer.py` uses raw httpx, and house-style
+inconsistency between two modules that hit the same endpoint would
+be hard to defend to a reviewer. Adopted the pragmatic split:
+match `answer.py` for now; backlog item to migrate both modules at
+the v2.0 release boundary if the cost-benefit warrants it.
+
+**No caching for v2.0 spike.** At `temperature=0` HyDE rewrites are
+deterministic for a given (prompt, query, model), so disk caching
+is safe to add later without correctness concerns. Skipped for the
+spike because the surface area (where to store, invalidation logic,
+test interaction) isn't justified by the latency saved on a single
+Phase 2c sweep.
+
+**Eager import of `QueryRewriter` in `retrieve.py`.** Earlier in
+the session I suggested a lazy import to dodge circular-import
+risk. Confirmed there is no such risk -- `query_rewriter.py`
+depends only on `httpx` and stdlib -- so the eager import is
+cleaner and matches the existing import structure for `bm25`,
+`embed`, and `index`.
+
+**Error on `use_hyde=True` without configured rewriter.** Rather
+than silently constructing a `QueryRewriter()` with defaults,
+`Retriever.retrieve(use_hyde=True)` raises `ValueError` if the
+constructor was not given a `query_rewriter`. Forces the caller to
+think about the LLM dependency explicitly. The eval harness and
+any future production call site will instantiate the rewriter
+deliberately at the call site, not by accident.
+
+### Open prediction (stated before Phase 2c runs)
+
+Phase 2a's prompt probe used **full HyDE**: the rewritten passage
+was passed as `query=` to `Retriever.retrieve()`, which routed it
+through *both* dense and sparse channels. CONSTRAINED recovered
+5/6 on the mechanism-clear set under that configuration.
+
+Phase 2b shipped **partial HyDE**: passage on dense only, original
+query on sparse. The two configurations are not the same
+experiment.
+
+My prediction, on the record before Phase 2c runs:
+
+- **Most likely** (best guess): partial HyDE performs at least as
+  well as full HyDE on the mechanism-clear set, because partial
+  HyDE preserves the original query's named-entity signal on
+  sparse. For example, q001 ("Which entities does PRA Supervisory
+  Statement 5/25 on climate-related risks apply to?") -- the
+  Phase 2a CONSTRAINED passage did *not* contain "SS5/25"
+  verbatim, only "This Statement"; partial HyDE keeps "SS5/25" in
+  the BM25 query, which should help the gold chunk
+  `__0005__scope` rank higher.
+- **Lower risk**: partial HyDE introduces no new strict misses
+  among the 23 currently-full-retrieval questions, because the
+  original query continues to feed sparse, and sparse interference
+  is therefore not increased relative to the pre-HyDE baseline.
+- **Non-zero risk**: q051 in Phase 2a recovered at rank 2 only
+  because the passage had Munich Re-specific terminology
+  ("Ambition 2025", "NZAOA"). If partial HyDE's sparse channel
+  drags the fused ranking toward a different Munich Re chunk that
+  happens to share BM25 vocabulary with the original query,
+  q051's gold rank could move. Watch for this in Phase 2c.
+
+Q14 falsification criterion remains as stated in
+`docs/open_questions.md`: at least 4 of 5 mechanism-clear misses
+recovered AND no new strict misses introduced. Phase 2c results
+will be recorded in a separate journal entry once the sweep
+completes.
+
+### Branch state
+
+```
+65b26b5  q14: Phase 2b — QueryRewriter + use_hyde flag on Retriever.retrieve()  ← HEAD
+bbefc85  q14: Phase 2a prompt probe — CONSTRAINED chosen
+c6597f9  merge: v1.0.1 patches
+88db63b  q13: Phase 1 baseline + Phase 1b text inspection
+```
+
+Not pushed. The branch becomes shareable after Phase 2c lands
+with the falsification result and a comparison summary.
