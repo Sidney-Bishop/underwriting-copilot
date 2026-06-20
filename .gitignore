@@ -32,3 +32,6 @@ eval/results/*
 
 # Local Netlify folder
 .netlify
+
+# Personal interview prep — not for repo
+interview.md
