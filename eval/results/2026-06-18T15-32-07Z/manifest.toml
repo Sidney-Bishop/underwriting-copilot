@@ -54,13 +54,13 @@ use_hyde = false
 
 [[cells]]
 id = "qwen_v1"
-model = "Qwen3-Coder-30B-A3B-Instruct-MLX-6bit"
+model = "Qwen3.6-35B-A3B-4bit"
 prompt_version = "v1"
 use_hyde = false
 
 [[cells]]
 id = "qwen_v2"
-model = "Qwen3-Coder-30B-A3B-Instruct-MLX-6bit"
+model = "Qwen3.6-35B-A3B-4bit"
 prompt_version = "v2"
 use_hyde = false
 
