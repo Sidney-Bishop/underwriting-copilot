@@ -420,8 +420,12 @@ notes = "The EIOPA System of Governance guidelines in the corpus predate AI-spec
 id = "q041"
 query = "How do Munich Re and Swiss Re differ in their disclosed approach to fossil fuel exclusion criteria?"
 expected_refusal = false
+# Q15 (2026-06-20): widened to include __0054__oil-and-gas — Munich Re's oil/gas
+# exclusion criteria. The question asks about "fossil fuel exclusion criteria"
+# generically; original gold only captured the coal side.
 gold_chunk_ids = [
     "munich_re_sustainability_2023__0100__defined-exclusion-criteria",
+    "munich_re_sustainability_2023__0054__oil-and-gas",
     "swiss_re_sustainability_2024__0260__swiss-re-s-fossil-fuel-related-threshold",
 ]
 category = "cross_document"
@@ -453,9 +457,13 @@ notes = "Cross-issuer climate monitoring comparison."
 id = "q044"
 query = "What climate-related insurance products or solutions do Munich Re and Swiss Re highlight in their sustainability disclosures?"
 expected_refusal = false
+# Q15 (2026-06-20): replaced Swiss Re side. Original __0232__ was about whether
+# climate change makes properties uninsurable — not about insurance products
+# or solutions, which is what the question asks for. __0157__ explicitly
+# discusses Swiss Re's renewable energy and transition-tech insurance solutions.
 gold_chunk_ids = [
     "munich_re_sustainability_2023__0133__climate-insurance-solutions",
-    "swiss_re_sustainability_2024__0232__impact-on-the-insurability-of-property-r",
+    "swiss_re_sustainability_2024__0157__advancing-the-net-zero-transition",
 ]
 category = "cross_document"
 notes = "Cross-issuer climate insurance products comparison."
@@ -533,9 +541,16 @@ notes = "ICAAP + ILAAP coverage."
 id = "q051"
 query = "What are the key elements of Munich Re's decarbonization approach and overall sustainability ambition?"
 expected_refusal = false
+# Q15 (2026-06-20): widened. Munich Re's decarbonization has three pillars
+# (investments, underwriting/liabilities, own operations); original gold only
+# captured investments + the summary table. Added __0153__liabilities for the
+# underwriting pillar and __0163__environmental-management for the operations
+# pillar. The question asks for "key elements" (plural).
 gold_chunk_ids = [
     "munich_re_sustainability_2023__0075__decarbonisation-approach-to-investments",
     "munich_re_sustainability_2023__0151__munich-re-group-ambition-2025-and-beyond",
+    "munich_re_sustainability_2023__0153__liabilities",
+    "munich_re_sustainability_2023__0163__4-environmental-management",
 ]
 category = "multi_chunk_munich_re"
 notes = "Decarbonization approach + group-level ambition."
@@ -555,9 +570,16 @@ notes = "Thermal coal + oil and gas underwriting restrictions, both single-issue
 id = "q053"
 query = "How does Swiss Re combine its underwriting approach with its broader monitoring of climate risks?"
 expected_refusal = false
+# Q15 (2026-06-20): widened. The question asks about COMBINING underwriting
+# with monitoring. Original gold paired exclusion policy + investment-side
+# monitoring, which doesn't directly illustrate integration. Added __0227__
+# and __0202__ which are explicit narratives of how Swiss Re monitors and
+# adjusts its underwriting based on climate science.
 gold_chunk_ids = [
     "swiss_re_sustainability_2024__0138__approach-in-underwriting",
     "swiss_re_sustainability_2024__0258__monitoring-climate-risks",
+    "swiss_re_sustainability_2024__0227__underwriting",
+    "swiss_re_sustainability_2024__0202__underwriting",
 ]
 category = "multi_chunk_swiss_re"
 notes = "Underwriting approach + climate risk monitoring at the firm level."
@@ -587,7 +609,16 @@ category = "single_chunk_pra_climate"
 id = "q056"
 query = "How does the PRA expect firms to address climate-related credit risk specifically?"
 expected_refusal = false
-gold_chunk_ids = ["pra_ss5-25_climate__0043__credit-risk"]
+# Q15 (2026-06-20): widened. Question says "firms" generically; per
+# q001's gold, SS5/25 applies to banks AND insurers. Original gold (__0043__)
+# is bank-specific. Added __0054__regulatory-balance-sheet which explicitly
+# covers PRA's expectations on insurers including climate-related risks in
+# credit risk assessments. Category retained as single_chunk_pra_climate to
+# reflect original benchmark design.
+gold_chunk_ids = [
+    "pra_ss5-25_climate__0043__credit-risk",
+    "pra_ss5-25_climate__0054__regulatory-balance-sheet",
+]
 category = "single_chunk_pra_climate"
 
 [[question]]

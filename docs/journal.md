@@ -1900,3 +1900,208 @@ warned against.
   partial HyDE in Phase 2c; q056 did not, and its failure is
   characterised here as gold-labelling tightness, not embedding
   pathology. Backlog item can be downgraded.
+
+### Q15 outcome — gold-labelling review complete on 8 candidates
+
+The chunk-text review identified by Phase 1b (4 candidates: q044, q046,
+q047, q053) and extended by Phase 2c diagnostics (4 more: q013, q041,
+q051, q056) was carried out using
+`scripts/probes/q15_chunk_text_review.py`, which dumped the question,
+gold chunks (full text), and Phase 2c retrieved chunks for each of the
+8 candidates. Decisions were made one candidate at a time by reading
+each chunk against the *specific* question being asked (not just
+checking topical relevance), with the four-outcome framework stated
+before reading: **STAND** / **WIDEN** / **REPLACE** / **AMBIGUOUS**.
+
+### Per-candidate verdicts
+
+| QID  | Verdict     | Action                                                                                 |
+|------|-------------|----------------------------------------------------------------------------------------|
+| q013 | STAND       | Gold (`__0053__thermal-coal`) uniquely answers the underwriting policy question;       |
+|      |             | retrieved alternatives are all about *investment* policy on thermal coal, not          |
+|      |             | underwriting. Munich Re distinguishes the two throughout the report.                   |
+| q041 | WIDEN       | Added `munich_re...__0054__oil-and-gas`. Question asks about "fossil fuel" exclusion;  |
+|      |             | original gold only covered the coal side. `__0054__` is Munich Re's literal            |
+|      |             | oil/gas exclusion criteria.                                                            |
+| q044 | REPLACE     | Replaced Swiss Re side. Original `__0232__impact-on-the-insurability...` is about      |
+|      |             | whether properties are *insurable* — a different topic from insurance products or      |
+|      |             | solutions. Replaced with `__0157__advancing-the-net-zero-transition` which             |
+|      |             | explicitly lists Swiss Re's renewable energy and transition-tech insurance products.   |
+| q046 | AMBIGUOUS   | Question conflates Swiss Re's general underwriting with PRA scenario governance;       |
+|      |             | Swiss Re does not explicitly discuss PRA SS5/25 alignment. Deferred to question        |
+|      |             | rewrite or replacement of G1 with a Swiss Re scenario-governance chunk.                |
+| q047 | STAND       | Gold has more specific renewable energy investment/coverage detail than any            |
+|      |             | retrieved alternative; STAND on the dump's evidence.                                   |
+| q051 | WIDEN       | Added `__0153__liabilities` and `__0163__4-environmental-management`. Munich Re's      |
+|      |             | decarbonization is a three-pillar approach (investments, underwriting, operations);    |
+|      |             | original gold only captured investments + summary table. The question asks for        |
+|      |             | "key elements" (plural).                                                               |
+| q053 | WIDEN       | Added `__0227__underwriting` and `__0202__underwriting`. Question asks about           |
+|      |             | *combining* underwriting with monitoring. Original gold paired exclusion policy +      |
+|      |             | investment-side monitoring, which doesn't directly illustrate integration. Added       |
+|      |             | chunks are explicit narratives of how Swiss Re monitors and adjusts its                |
+|      |             | underwriting based on climate science.                                                 |
+| q056 | WIDEN       | Added `__0054__regulatory-balance-sheet`. Question says "firms" generically; per       |
+|      |             | q001's gold, SS5/25 applies to banks AND insurers. Original gold (`__0043__`) was      |
+|      |             | bank-specific; `__0054__` explicitly covers PRA's expectations on insurers including  |
+|      |             | climate-related credit risk in internal credit assessments.                            |
+
+**Aggregate: STAND 2, WIDEN 4, REPLACE 1, AMBIGUOUS 1.** Six of eight
+candidates required benchmark changes; five were applied to
+`eval/benchmark.toml` (the AMBIGUOUS q046 deferred pending a question
+rewrite or replacement chunk identification).
+
+### Honesty check applied during review
+
+For every WIDEN/REPLACE decision: re-read the *question* before
+validating any rationale for "this chunk should count". q013 was the
+first candidate examined and turned out to be the strictest STAND
+of the lot — the slug pattern (`__0100__defined-exclusion-criteria`)
+had suggested gold-labelling tightness, but the chunk text revealed
+the retrieved alternatives were about *investment* policy, not the
+underwriting policy the question asks. This shifted my morning
+framing of "8 candidates potentially Q15-class" to a sharper
+"defensibility depends on the chunks, not the slugs" — and made the
+remaining verdicts more careful.
+
+### Rescore against corrected benchmark
+
+`eval/rescore.py` recomputes gold-dependent metrics
+(retrieval_recall, citation_recall, citation_precision, citation_f1)
+from a run's `raw.jsonl` against the current `benchmark.toml`, without
+re-invoking the LLM. Calls into `eval.scorer` directly, so the
+rescored numbers are guaranteed identical to a re-run modulo only
+the gold changes. Outputs `raw_rescored.jsonl` alongside the original.
+
+Ran on both canonical runs:
+
+**Baseline (2026-06-18) — production-default cell (gemma_v2)**
+
+| Metric | Original | Q15-corrected | Delta |
+|--------|----------|----------------|-------|
+| mean_retrieval_recall | 0.633 | 0.655 | +0.023 |
+| mean_citation_recall  | 0.598 | 0.621 | +0.023 |
+
+The Q15-corrected baseline citation recall is 0.621, compared to the
+v1.0-published 0.598. A 2.3 percentage point upward correction.
+Identical delta across all four cells of the baseline sweep — this is
+the structural signal that the correction is about benchmark gold
+labels, not any one model's behaviour.
+
+**Phase 2c (2026-06-20) — gemma_v2_hyde**
+
+| Metric | Original | Q15-corrected | Delta |
+|--------|----------|----------------|-------|
+| mean_retrieval_recall | 0.684 | 0.733 | +0.049 |
+| mean_citation_recall  | 0.653 | 0.703 | +0.049 |
+
+Phase 2c benefits ~2× more from the Q15 corrections than the baseline
+does. This is consistent with Phase 2c's diagnostic story: HyDE was
+already surfacing adjacent-but-correct chunks for q051, q053, q056 —
+chunks that are now gold under the corrected benchmark.
+
+### Per-question impact (Phase 2c, gemma_v2_hyde cell)
+
+| QID  | retrieval_recall | citation_recall | citation_f1 |
+|------|------------------|-----------------|-------------|
+| q041 | 0.500 → 0.667    | 0.500 → 0.667   | 0.400 → 0.667 |
+| q044 | 0.500 → 1.000    | 0.500 → 1.000   | 0.500 → 1.000 |
+| q051 | 0.000 → 0.500    | 0.000 → 0.500   | 0.000 → 0.500 |
+| q053 | 0.000 → 0.500    | 0.000 → 0.500   | 0.000 → 0.500 |
+| q056 | 0.000 → 0.500    | 0.000 → 0.500   | 0.000 → 0.333 |
+
+### Q14 is NOT retroactively unfalsified
+
+The Q14 falsification criterion was *"at least 4 of 5 mechanism-clear
+strict misses (q001, q004, q051, q055, q056) recovered"*. Pre-Q15
+reading: q001/q004/q055 recovered, q051/q056 strict miss (recall 0.000).
+**3 of 5. Falsified as stated.**
+
+Under the Q15-corrected gold, q051 and q056 each show retrieval_recall
+0.500 — i.e., partial recovery. If "recovered" had been defined more
+loosely as "retrieval_recall > 0", the count would be 3 strict + 2
+partial — still not 4 strict, but closer.
+
+The honest record stands as follows:
+
+- **Q14 published outcome: falsified at 3/5 strict recovery.** No
+  retroactive change. The criterion was pre-registered against the
+  gold tags as they existed at evaluation time.
+- **Q15 is an independent benchmark correction.** It identified five
+  gold-labelling errors across the broader N=70 benchmark, two of
+  which intersect with Q14's target set.
+- **A future Q14-style experiment, run against the corrected
+  benchmark, might yield a different result.** That experiment hasn't
+  been conducted. The Phase 2c run's rescored numbers (above) are an
+  *indication* of what such a future experiment might show, but they
+  are not themselves a falsification test — the criterion would need
+  re-stating against the new gold before evidence is observed.
+
+This is the goalpost-discipline pattern stated in the morning entry
+holding through to the close of the day.
+
+### Implications for shipping decisions
+
+Two things are now defensibly publishable:
+
+1. **The v1.0 published baseline is conservative.** mean_citation_recall
+   on the production-default cell moves from 0.598 to 0.621 under
+   corrected gold; mean_retrieval_recall moves from 0.633 to 0.655.
+   Section 6 of the v1.0 Quarto report uses the conservative numbers.
+   **Whether to amend Section 6 is deferred to a separate decision** —
+   it warrants fresh-headed consideration of "publish both numbers
+   with methodology note" vs "v1.0 release stands, Q15 corrections
+   apply forward-only" vs "rewrite Section 6 around the corrected
+   numbers". Recorded as backlog item.
+2. **Partial HyDE improves recall by 5-8 percentage points depending
+   on which benchmark is used.** Against the v1.0 baseline: +5.1pp
+   retrieval recall. Against the Q15-corrected baseline: +7.8pp.
+   Both numbers are honest; the framing matters for any v2.0 release
+   write-up. **Shipping decision still deferred** to v2.0 release
+   boundary.
+
+### q046 follow-up needed
+
+q046 was marked AMBIGUOUS because the question conflates "Swiss Re's
+underwriting approach" with "PRA's expectations on scenario governance
+and controls" — and Swiss Re's sustainability report doesn't
+explicitly discuss alignment with PRA SS5/25 (Swiss Re isn't a
+PRA-regulated UK firm). Two paths forward, both legitimate:
+
+- **Rewrite the question** to ask about general underwriting alignment
+  rather than scenario-governance alignment specifically. The current
+  gold (`__0138__approach-in-underwriting` thermal coal policy) would
+  then stand.
+- **Replace G1** with a Swiss Re chunk that specifically discusses
+  climate scenario analysis governance, if such a chunk exists.
+
+Deferred. Backlog.
+
+### Files touched
+
+- `eval/benchmark.toml` — 5 gold changes (q041, q044, q051, q053, q056)
+  with inline TOML comments documenting each Q15 decision and date.
+  Original categories preserved (e.g. q056 retains
+  `single_chunk_pra_climate`) — the category reflects original
+  benchmark design intent; widening one entry's gold doesn't
+  retroactively change the design category.
+- `eval/rescore.py` — new script.
+- `eval/results/2026-06-18T15-32-07Z/raw_rescored.jsonl` — Q15-corrected
+  baseline metrics.
+- `eval/results/2026-06-20T12-50-24Z/raw_rescored.jsonl` — Q15-corrected
+  Phase 2c metrics.
+- `scripts/probes/q15_chunk_text_review.py` — new probe that produced
+  `scratch/q15_chunk_text_review.txt` (gitignored).
+
+### Backlog items opened or sharpened
+
+- **Section 6 of v1.0 Quarto report amendment** — decision deferred,
+  needs fresh-headed thought on publish-both-numbers vs forward-only.
+- **q046 question rewrite or chunk replacement** — deferred.
+- **`dense_rank`/`sparse_rank` exposure in `raw.jsonl`** — would have
+  settled the sparse-interference question on q051 directly during
+  Phase 2c.
+- **Embedding diagnostic** on the original Finding 3 lexical-match
+  cases — substantially closed by Q14 + Q15 outcomes; q004/q055
+  recovered cleanly, q056 reclassified as gold-labelling. Backlog
+  item can be downgraded or closed.
