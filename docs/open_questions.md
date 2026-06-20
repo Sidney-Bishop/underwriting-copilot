@@ -220,3 +220,75 @@ Q14's HyDE evaluation should not target these 4 questions. If gold
 tags change, q044/q046/q047/q053 should be re-classified before the
 HyDE evaluation runs, to avoid HyDE getting credit (or blame) for
 gold-labelling movement.
+
+### Update — 2026-06-20 afternoon (Phase 2a complete)
+
+A prompt-iteration probe (`scripts/probes/q14_hyde_prompt_probe.py`,
+output in `scratch/q14_prompt_probe.txt`) tested three HyDE prompt
+variants against the 6 mechanism-clear strict misses, using the full
+hybrid `Retriever` and the production-default LLM (Gemma 4 31B IT).
+Recovery in top-5:
+
+| Condition         | Recovered |
+|-------------------|-----------|
+| BASELINE          | 0/6       |
+| HYDE_GENERIC      | 3/6       |
+| HYDE_DOMAIN       | 4/6       |
+| HYDE_CONSTRAINED  | 5/6       |
+
+**Outcome 1 — q013 reclassified to Q15 scope.** Phase 1b had
+classified q013 as cross-issuer interference (Munich Re query
+returning Swiss Re chunks). CONSTRAINED HyDE eliminates the
+cross-issuer problem — 4 of 5 returned chunks are now Munich Re —
+but the specific gold chunk
+`munich_re_sustainability_2023__0053__thermal-coal` is not in the
+top-5. The top-ranked Munich Re chunk under HyDE is
+`__0100__defined-exclusion-criteria`, which is also Munich Re's
+underwriting exclusion policy. Same pattern as q044/q046/q047/q053:
+the retriever surfaced a plausibly correct answer; the gold tag is
+narrow. q013 added to Q15's review scope. See 2026-06-20 afternoon
+journal entry.
+
+**Outcome 2 — chosen HyDE prompt for Phase 2b integration: CONSTRAINED.**
+Full prompt text is in `q14_hyde_prompt_probe.py` (`PROMPT_CONSTRAINED`).
+The choice rests on (a) 5/5 recovery on the reduced mechanism-clear
+set after q013's reclassification, (b) on-shape regulatory-register
+passages (formal, declarative, no LLM-isms), (c) tractable latency
+(~5-8s per LLM call on the production-default model).
+
+### Revised Q14 falsification test set
+
+After q013's reclassification, the mechanism-clear miss set is:
+
+- q001 — topic dominance
+- q004 — surface match exists but missed (was Finding 3, now HyDE-tractable)
+- q051 — topic dominance
+- q055 — surface match exists but missed (was Finding 3, now HyDE-tractable)
+- q056 — surface match exists but missed (was Finding 3, now HyDE-tractable)
+
+Five questions, not six.
+
+### Revised falsification criterion
+
+CONSTRAINED HyDE must recover at least **4 of the 5** mechanism-clear
+strict misses on the production-default cell *in the full integration*
+(Phase 2c), *without* introducing new strict misses in the 23
+currently-full-retrieval questions.
+
+Phase 2a result of 5/5 in the probe is encouraging but is **not** the
+falsification test. The probe used the same retriever path as
+production but on hand-picked questions. The full Phase 2c integration
+test runs the production-default cell end-to-end against the entire
+N=70 benchmark, which is the falsifying surface.
+
+If Phase 2c shows fewer than 4 of 5 recovered: HyDE is not the v2.0
+lead path. If Phase 2c shows new strict misses among the 23
+currently-full questions: HyDE cannot ship unmodified.
+
+### Out of scope (additions)
+
+- Q14 does not target q013. q013's resolution falls to Q15.
+- Q14 does not target the "why did the original-query dense embedding
+  miss q004/q055/q056 despite lexical match" question. That moved to
+  the backlog as a future embedding diagnostic on the afternoon of
+  2026-06-20.

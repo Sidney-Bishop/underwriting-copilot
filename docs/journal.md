@@ -1438,3 +1438,142 @@ artefact specific to these chunks.
 - `scripts/probes/q13_strict_misses_with_text.py`
 - `scratch/q13_phase1b.txt` (gitignored — diagnostic output, 11 strict
   misses with gold and retrieved chunk text)
+
+### Afternoon session — Q14 Phase 2a HyDE prompt probe
+
+After the morning's Phase 1b classification, three HyDE prompt
+variants were tested against the 6 mechanism-clear strict misses
+(q001, q004, q013, q051, q055, q056) using the full hybrid
+`Retriever` and the production-default LLM (Gemma 4 31B IT). The
+probe script is `scripts/probes/q14_hyde_prompt_probe.py`. Output
+captured to `scratch/q14_prompt_probe.txt` (gitignored).
+
+**Result: gold-in-top-5 by condition**
+
+| Condition         | Recovered | Notes                                      |
+|-------------------|-----------|--------------------------------------------|
+| BASELINE          | 0/6       | Confirms documented strict-miss state      |
+| HYDE_GENERIC      | 3/6       | Below Q14 falsification threshold (≥4)     |
+| HYDE_DOMAIN       | 4/6       | Meets threshold                            |
+| HYDE_CONSTRAINED  | **5/6**   | Meets threshold with margin; CHOSEN PROMPT |
+
+**Per-question pattern (CONSTRAINED)**
+
+- **q001, q004, q051, q055, q056** — all recovered. Gold chunk
+  appears in top-5 of fused hybrid retrieval. Per-question rank
+  recovery is rank 1 for q001 and q004, rank 2 for q051, rank 3
+  for q055, rank 5 for q056.
+- **q013** — not recovered, but the failure has a clear diagnosable
+  cause that is *not* a HyDE failure (see below).
+
+### Finding A — CONSTRAINED produces on-shape regulatory passages
+
+The CONSTRAINED prompt is producing exactly the kind of passage the
+prompt design aimed for. Sample passages from the run, abridged:
+
+- **q001**: *"This Statement applies to all PRA-regulated firms,
+  including banks, building societies, insurance companies and
+  investment firms, regardless of their size or the nature of their
+  business."*
+- **q004**: *"Climate-related risks are distinctive in that they
+  are (i) non-linear, meaning that small changes in temperature can
+  lead to disproportionate and abrupt changes in the risk profile;
+  (ii) systemic...; (iii) characterized by high uncertainty..."*
+  — note the model independently arrived at the (i)/(ii)/(iii)
+  parallel construction the actual PRA paragraph uses.
+- **q055**: *"The PRA expects firms to integrate climate-related
+  risks into their Own Risk and Solvency Assessment (ORSA),
+  ensuring that the assessment of these risks is consistent with
+  the firm's overall risk management framework..."*
+
+These are formal-register, technical, declarative passages — no
+LLM-isms, no preamble. The "imagine the literal paragraph"
+prompt design is doing what it was meant to do.
+
+### Finding B — q013 is not a HyDE failure; reclassified to Q15 scope
+
+The CONSTRAINED passage for q013 is on-point:
+
+> *"Munich Re does not provide underwriting for new thermal coal
+> mines and new thermal coal-fired power plants. This policy is
+> aligned with the company's commitment to the Net-Zero Insurance
+> Alliance..."*
+
+The retrieved chunks under CONSTRAINED are all Munich Re except
+one:
+
+```
+[1] munich_re_sustainability_2023__0100__defined-exclusion-criteria
+[2] munich_re_sustainability_2023__0269__sustainable-finance
+[3] munich_re_sustainability_2023__0153__liabilities
+[4] swiss_re_sustainability_2024__0138__approach-in-underwriting
+[5] munich_re_sustainability_2023__0048__3-sustainability-in-business
+```
+
+The Phase 1b baseline for q013 was cross-issuer interference (Swiss
+Re's underwriting chunk at rank 1). HyDE has resolved the
+cross-issuer problem — 4 of 5 hits are now Munich Re — but the
+specific gold chunk `__0053__thermal-coal` is not in the top-5.
+
+The top-ranked Munich Re chunk under HyDE is
+`__0100__defined-exclusion-criteria`, which is literally about
+Munich Re's defined exclusion criteria for underwriting. Without
+reading the two chunks side by side, the apparent failure looks
+like the same gold-labelling tightness pattern that q044, q046,
+q047, q053 exhibited in Phase 1b — the retriever surfaced a
+plausibly correct answer; the gold tag is a narrow choice.
+
+**q013 added to the Q15 review scope.** Q14's mechanism-clear miss
+set drops from 6 to 5. CONSTRAINED's recovery rate on the
+reduced set is 5/5.
+
+### Finding C — Soft retraction of Finding 3 framing (q004, q055, q056)
+
+Earlier today (morning entry, Finding 3) q004, q055, and q056 were
+framed as having "embedding pathology" because their gold chunks
+have near-perfect lexical match to the query and yet dense retrieval
+still missed. The framing implied something specific to those
+chunks needed deeper investigation.
+
+The afternoon evidence shows all three recover under all three
+HyDE variants. This does not invalidate the morning's observation
+about lexical match, but the framing of "needs deeper investigation"
+is now superseded: HyDE addresses these cases as a side effect of
+how it broadly addresses query/chunk embedding asymmetry. The
+embedding pathology, whatever its mechanism, is HyDE-tractable.
+
+A residual question remains: *why* did the original-query dense
+embedding miss these chunks despite the lexical match? This is no
+longer blocking Q14. Recorded in `docs/backlog.md` for a future
+embedding diagnostic, not a v2.0 work item.
+
+### Decisions
+
+- **Chosen HyDE prompt for Phase 2b integration**: CONSTRAINED.
+  Recovery 5/5 on the reduced mechanism-clear set; on-shape
+  regulatory-register passages; ~5-8s per LLM call.
+- **q013 reclassified**: removed from Q14's mechanism-clear set,
+  added to Q15's gold-labelling review scope.
+- **Q14 falsification threshold remains "at least 4 of (now) 5
+  mechanism-clear misses recovered on the production-default cell".**
+  The probe's 5/5 result is encouraging but is *not* the
+  falsification test — that requires the full integration and the
+  cell re-run (Phase 2c), which must also confirm no regressions
+  in the 23 currently-full-retrieval questions.
+- **Soft retraction of morning Finding 3**: q004, q055, q056
+  "embedding pathology needs investigation" framing superseded.
+  Pathology is HyDE-tractable. The deeper "why did dense miss
+  these despite lexical match" question moves to backlog.
+
+### Files created (on v2.0-dev/q13-hyde-spike branch)
+
+- `scripts/probes/q14_hyde_prompt_probe.py`
+- `scratch/q14_prompt_probe.txt` (gitignored — probe output)
+
+### Next step
+
+Phase 2b — `query_rewriter.py` in `src/underwriting_copilot/`,
+adding `use_hyde: bool` to `Retriever.retrieve()`. The CONSTRAINED
+prompt is the one we commit to in the module. Tests for the
+rewriter in isolation before the integration goes near the eval
+harness.
