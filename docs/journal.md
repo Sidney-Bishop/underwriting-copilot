@@ -2105,3 +2105,17 @@ Deferred. Backlog.
   cases — substantially closed by Q14 + Q15 outcomes; q004/q055
   recovered cleanly, q056 reclassified as gold-labelling. Backlog
   item can be downgraded or closed.
+
+### Section 6 amendment decision — declined (2026-06-21)
+
+Investigated whether to amend Section 6 of the v1.0 Quarto report
+to reflect Q15-corrected numbers (0.598 → 0.621 on production-default
+cell). Declined. The v1.0 report stands as a snapshot of what was
+known on 2026-06-19. The Q15 correction is documented in yesterday's
+entries, in eval/rescore.py, in the rescored result files, and in
+the benchmark.toml inline comments. A reviewer who reads the
+repository has the complete picture; a reviewer who reads only the
+published report has the v1.0 conclusions as published. Both audiences
+are correctly served.
+
+Backlog item closed.
