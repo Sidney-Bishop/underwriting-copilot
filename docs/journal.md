@@ -2119,3 +2119,151 @@ published report has the v1.0 conclusions as published. Both audiences
 are correctly served.
 
 Backlog item closed.
+
+## 2026-06-23 — GLM model survey: pre-registration
+
+Opening a new experiment on the `v2.0-dev/glm-model-survey`
+branch (HEAD `ecea02f`, branched from `q13-hyde-spike` at
+`0ff6e0a`). The branch carries one infrastructure change so far:
+`--max-tokens` CLI flag on `eval.runner` (commit `ecea02f`)
+threading an optional override through to `AnswerGenerator`,
+needed because GLM hybrid-reasoning models can truncate at the
+1024 default.
+
+### Motivation
+
+Two new models registered with the shared oMLX stack on
+2026-06-21:
+
+- `GLM-4.7-Flash-6bit` (~20-25 GB resident, ~30B class)
+- `GLM-4.5-Air-6bit` (~75-80 GB resident, 106B-total / 12B-active
+  MoE)
+
+The other-Claude review on tst_llm confirmed both clear oMLX's
+reasoning-parser and Q17 chat-template compatibility surface, so
+they're driveable through Cedant's existing harness without
+silent-empty-output failures.
+
+The brief's stated model-selection criterion (D015) is **zero
+hallucinated citations across the N=70 answerable sweep**.
+Cedant's production default Gemma 4 31B IT clears that bar.
+Qwen3.6-35B-A3B-4bit does not (7 hallucinations at v2, 23 at
+v1). Neither GLM is a candidate to replace Gemma without
+clearing the same criterion against Cedant's own benchmark.
+
+### Experiment design
+
+Single sweep per model, against the **Q15-corrected
+benchmark** (`eval/benchmark.toml` as of 2026-06-21 — five
+gold-label corrections applied). Prompt v2 only (the production
+prompt; running v1 is unnecessary now that the family-axis claim
+is retracted). Top-k = 5. No HyDE (testing the model in
+isolation, not the model x retrieval-rewriting interaction).
+
+**Token budget: `--max-tokens 2048`** on both runs. The right
+framing of this is architecturally-appropriate, not
+budget-asymmetric. Gemma's canonical sweeps ran at 1024 with the
+Qwen-family thinking trace disabled at the server via
+`chat_template_kwargs: {"enable_thinking": false}` (documented
+in `answer.py` and `journal.md` Day-3 "thinking-trace consumed
+the token budget" finding). Gemma at 1024 is not budget-
+constrained because its full budget goes to the answer. GLM
+hybrid-reasoning has no equivalent server-side disable -
+reasoning is structural to the model's chat-template behaviour
+and is parsed by oMLX into separate `thinking` + `text` blocks.
+At 2048, GLM Flash (~918 token reasoning overhead) leaves ~1130
+for the answer; GLM Air (~327 token reasoning overhead) leaves
+~1721. **At 2048, GLM's effective answer budget is comparable
+to or larger than Gemma's at 1024.** Re-running Gemma at 2048
+would not change its behaviour, so the canonical 1024 baseline
+stands as a fair comparison anchor.
+
+### Order
+
+1. **Flash first** (smaller model, lower kernel-panic risk on
+   recently-unstable hardware).
+2. **Pause. Check panic file count** - baseline = 2 files
+   (2026-06-20 and 2026-06-21). New file = stop, don't run Air.
+3. **Air second** if Flash completed cleanly.
+
+### Pre-registered success criteria
+
+A GLM model is **a viable v2.0 Cedant model candidate** if and
+only if all of these hold on its full N=70 sweep:
+
+1. **Zero hallucinated citations** on answerable questions
+   (i.e., it clears D015's bar). One or more hallucinations
+   disqualifies it as a Gemma replacement, regardless of recall.
+2. **All 26 refusal questions correctly refused** with the exact
+   refusal phrase. (Same bar Gemma and Qwen v2 both cleared in
+   the canonical sweep.)
+3. **Mean citation_recall within 10 percentage points of
+   Gemma's Q15-corrected 0.621**, i.e., >= 0.521. The 10pp
+   threshold matches the project's documented criterion for
+   meaningful citation_recall equivalence between models
+   (decisions.md D014 falsification criterion line, where 10pp
+   on `citation_accuracy` was the threshold for retracting the
+   family-axis claim).
+
+Failing any of these criteria means the model is *interesting*
+but **not a Gemma replacement** for production.
+
+### Predictions (on record before any evidence)
+
+**Flash:**
+
+- 50% confidence it clears criterion 1 (zero hallucinations).
+  The other-Claude tst_llm finding of 0 fabricated findings on
+  N=1 is encouraging but not predictive at Cedant's N=70 scale.
+- 70% confidence it clears criterion 2 (refusal contract).
+  Hybrid-reasoning models are typically well-behaved on
+  instruction following.
+- 50% confidence it clears criterion 3 (citation_recall within
+  10pp of Gemma). Flash is ~30B-class with hybrid-reasoning;
+  the reasoning overhead may eat into format discipline on
+  multi-cite questions, but 10pp is a substantial tolerance.
+
+**Air:**
+
+- 30% confidence it clears criterion 1. MoE-with-12B-active is
+  closer to the brief's stated 7-14B sweet spot but the absolute
+  model size is larger and harder to reason about.
+- 70% confidence it clears criterion 2.
+- 60% confidence it clears criterion 3.
+
+Joint probability (all three on either model): roughly 15-20%.
+Most likely outcome: at least one criterion fails on each model.
+That would still be a useful result - we'd know what *kind* of
+failure each model exhibits and could shape the v2.0
+model-survey question more precisely.
+
+### What this experiment is NOT
+
+- Not a model swap-in proposal. D015 stands until a deliberate
+  D-decision supersedes it. This experiment generates evidence
+  to *inform* such a decision, not to *make* it.
+- Not an exhaustive model survey. It's specifically two GLM
+  variants on Cedant's existing fixtures.
+
+### Failure modes I'm watching for
+
+- **Truncation despite 2048 token budget.** If the GLM emits no
+  text after reasoning, max_tokens needs lifting further (4096?).
+- **First-call cold-load latency** on Air. 75-80GB resident from
+  cold could be 60+ seconds; the runner has no separate warm-up
+  pass, so the first cell's latency will be skewed.
+- **Kernel panic during Air sweep.** This is the main hardware
+  risk. macOS Tahoe 26.5.1 was installed 2026-06-22 as candidate
+  fix; one clean Flash run accumulates as evidence for stability
+  but doesn't prove it.
+- **Refusal contract violation.** Hybrid-reasoning models
+  sometimes leak reasoning into the answer; if the close-marker
+  parsing is imperfect at the oMLX layer, refusal phrases could
+  come through with leading whitespace or trailing reasoning
+  fragments, breaking the strict-match detector.
+
+### Next entry
+
+Will be written *after* Flash's sweep completes (or fails). No
+intermediate journal updates unless something surprising happens
+mid-sweep (kernel panic, oMLX disconnect, etc.).
