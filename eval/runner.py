@@ -169,6 +169,7 @@ def run_sweep(
     models: list[str],
     prompt_names: list[str],
     top_k: int = DEFAULT_TOP_K,
+    max_tokens: int | None = None,
     prompt_registry: dict[str, str] | None = None,
     generator_factory=None,  # for tests
     use_hyde: bool = False,
@@ -179,6 +180,12 @@ def run_sweep(
     progress to the terminal — this generator stays pure and testable.
     ``generator_factory`` exists for tests to substitute a fake
     AnswerGenerator; production calls let it default.
+
+    ``max_tokens`` overrides AnswerGenerator's DEFAULT_MAX_TOKENS when
+    provided. Leave as None for the canonical D014 behaviour; set to
+    a higher floor (>=1500-2048) for hybrid-reasoning models like
+    GLM-4.5 / GLM-4.7 where reasoning + close-marker + answer share
+    the budget.
     """
     if prompt_registry is None:
         prompt_registry = PROMPTS
@@ -191,11 +198,14 @@ def run_sweep(
     for model in models:
         for prompt_name in prompt_names:
             prompt_text = prompt_registry[prompt_name]
-            generator = generator_factory(
-                retriever=retriever,
-                model=model,
-                system_prompt=prompt_text,
-            )
+            generator_kwargs: dict = {
+                "retriever": retriever,
+                "model": model,
+                "system_prompt": prompt_text,
+            }
+            if max_tokens is not None:
+                generator_kwargs["max_tokens"] = max_tokens
+            generator = generator_factory(**generator_kwargs)
             for question in questions:
                 cell_index += 1
                 result, error = try_answer_with_retry(
@@ -313,6 +323,17 @@ def _build_argparser() -> argparse.ArgumentParser:
         help="Enable HyDE query rewriting on the dense channel (Q14). "
              "Original query continues to feed the sparse channel.",
     )
+    p.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Override AnswerGenerator's max_tokens budget. Default: "
+             "None means use AnswerGenerator's DEFAULT_MAX_TOKENS "
+             "(1024). Hybrid-reasoning models (GLM-4.5, GLM-4.7) "
+             "typically need >=1500-2048 to avoid truncation of "
+             "reasoning + answer; non-reasoning models like Gemma "
+             "can leave this unset.",
+    )
     return p
 
 
@@ -428,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
                 models=args.models,
                 prompt_names=args.prompts,
                 top_k=args.top_k,
+                max_tokens=args.max_tokens,
                 use_hyde=args.use_hyde,
             ):
                 fp.write(json.dumps(record) + "\n")
@@ -452,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             "limit": args.limit,
             "question_ids": args.question_ids,
             "use_hyde": args.use_hyde,
+            "max_tokens": args.max_tokens,
         }
         with open(meta_path, "w") as fp:
             json.dump(meta, fp, indent=2)
