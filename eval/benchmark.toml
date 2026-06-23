@@ -481,14 +481,14 @@ notes = "Regulator-vs-regulated-entity comparison. Munich Re's voluntary restric
 
 [[question]]
 id = "q046"
-query = "How does Swiss Re's underwriting approach align with the PRA's expectations on scenario governance and controls in SS5/25?"
+query = "How does Swiss Re's underwriting approach for climate-related risks compare with the PRA's expectations on underwriting in SS5/25?"
 expected_refusal = false
 gold_chunk_ids = [
     "swiss_re_sustainability_2024__0138__approach-in-underwriting",
     "pra_ss5-25_climate__0031__scenario-governance-controls-and-review",
 ]
 category = "cross_document"
-notes = "Regulator-vs-regulated-entity scenario governance comparison."
+notes = "Regulator-vs-regulated-entity underwriting comparison. Q15 (2026-06-21): original phrasing on 'scenario governance and controls' rewritten 2026-06-23 to 'underwriting approach for climate-related risks' — Swiss Re corpus has zero scenario-governance content (verified by keyword scan); rewritten question is answerable by existing gold chunks. Gold unchanged."
 
 [[question]]
 id = "q047"
