@@ -2388,3 +2388,178 @@ Pause for panic-file check confirmed clean. Run Air per the
 pre-registered order. Air's result will determine whether the
 hallucination behaviour is a Flash-specific property or a
 GLM-family pattern.
+
+## 2026-06-23 — GLM model survey: Air sweep result and closure
+
+Air sweep ran at 2026-06-23T08-22-50Z. Output at
+`eval/results/2026-06-23T08-22-50Z/`. **16 of 70 cells completed
+successfully, 54 errored** with "peer closed connection without
+sending complete message body" on the network layer. Wall-clock
+1133.7s (~18.9 min) before completion. Hardware checkpoint clean
+throughout — panic file count unchanged at 2 (baseline 2026-06-20
+and 2026-06-21).
+
+### Pre-registered verdict: NOT EVALUABLE, not a Gemma replacement
+
+The conjunctive pre-registration cannot be evaluated against this
+data. Only 16 cells completed, with massive selection bias toward
+early cells in the sweep. Aggregate metrics computed from these
+16 would not be meaningfully comparable to Gemma's N=70.
+
+Per the pre-registered discipline, an experiment that cannot be
+evaluated against its stated criteria is **not** retrofitted with
+new criteria after seeing partial evidence. Air is not currently
+servable to completion under Cedant's harness on this oMLX
+configuration and hardware. That is a real finding.
+
+### Failure pattern (the actual interesting result)
+
+The 16 successful cell indices were 1, 2, 4, 6, 8, 10, 13, 14,
+15, 16, 17, 18, 22, 29, 42, 44. Monotonic degradation, not random
+errors:
+
+- Cells 1-22: 13 successes / 22 attempts (59%)
+- Cells 23-44: 3 successes / 22 attempts (14%)
+- Cells 45-70: 0 successes / 26 attempts (0%)
+
+This is a textbook resource-exhaustion signature, not transient
+network errors. The model serves cleanly when fresh, degrades as
+something accumulates, then stops serving at all.
+
+### Root cause diagnosis (from oMLX dashboard inspection)
+
+The oMLX dashboard reported:
+
+- Active memory usage during sweep: 96.1 GB
+- oMLX soft cap: 91.4 GB (Balanced policy)
+- Hard cap derived from kernel: 102.1 GB
+- Air model alone: ~76.48 GB observed / 84.93 GB estimated
+
+Critically, the dashboard's Server Configuration -> Resource
+Management page revealed the load-bearing constraint: the kernel
+`iogpu.wired_limit_mb` is only 107.5 GB, and oMLX can only
+allocate up to that. This is a macOS kernel parameter that
+limits how much memory can be wired to the GPU (which on Apple
+Silicon's unified memory architecture includes MLX model
+weights). The oMLX soft cap (91.4 GB) is derived from the kernel
+limit (107.5 GB), leaving ~16 GB headroom for transient
+inference spikes.
+
+Air's working set of ~76-85 GB plus Cedant's other resident
+state (Python runtime, Qdrant, BGE-M3 embedding model, OS
+overhead) pushes the system past the 91.4 GB soft cap during
+sustained inference. When it does, oMLX correctly self-defends
+by dropping connections rather than risking a kernel-level
+wired-memory breach (which would manifest as a kernel panic,
+the failure mode documented on 2026-06-20 and 2026-06-21 on
+this hardware).
+
+The failure was architectural, not transient. A restart of oMLX
+would not change the kernel limit and would reproduce the same
+failure pattern.
+
+### What would fix this (and why we're not doing it)
+
+oMLX suggests raising the kernel wired-memory limit via
+`sudo sysctl iogpu.wired_limit_mb=124928`. This would raise the
+limit from 107.5 GB to 122 GB on the 128 GB M5 Max, giving Air
+the headroom to complete its working set.
+
+We did not do this. Reasoning:
+
+1. The 107.5 GB current limit is the regime where the recent
+   kernel panics occurred (2026-06-20 and 2026-06-21). Pushing
+   past it on hardware whose SoC power-management instability is
+   only candidate-fixed (macOS Tahoe 26.5.1, installed
+   2026-06-22, validated by one clean Flash sweep this morning)
+   is asymmetric risk for an experiment whose outcome we already
+   substantively know.
+2. Even a conservative bump to 115 GB takes us +7.5 GB into a
+   regime with no panic-stability evidence. The 122 GB suggested
+   value pushes harder into the regime where panics have already
+   happened.
+3. Air's classification on tst_llm as "structurally-compatible
+   but resource-marginal" was made specifically because of this
+   hardware constraint. Cedant's single-shot RAG workload was
+   hypothesised to be lower-pressure than tst_llm's multi-step
+   agentic workload; this experiment falsifies the hypothesis
+   for THIS kernel limit. Air at the current limit is not
+   servable on Cedant either, and the gating constraint is
+   hardware-side, not workload-side.
+
+### Implications for the GLM model survey
+
+The survey conclusion is:
+
+- GLM-4.7-Flash-6bit: NOT a Gemma replacement. Disqualified by
+  criterion 1 (3 hallucinated citations in N=44 answerable).
+  Recall and refusal contract passed. Latency 2.5x faster than
+  Gemma. Would be a candidate under a softer hallucination
+  criterion.
+- GLM-4.5-Air-6bit: NOT EVALUABLE at the current kernel
+  wired-memory limit. Air's working set is too large to sustain
+  a 70-question sweep without breaching oMLX's soft cap.
+  Whether Air would clear D015's criteria is unknown.
+
+D015 stands. The production default remains
+`gemma-4-31B-it-MLX-6bit`.
+
+### Cross-project signal
+
+This finding corroborates tst_llm's prior classification of Air
+as "structurally-compatible but resource-marginal" with direct
+Cedant evidence. The hypothesis that Cedant's single-shot
+workload might clear Air where tst_llm's multi-step workload
+could not is now falsified at the current kernel parameter.
+
+For tst_llm's future reference (and the other Claude reading
+this): the gating factor is not workload shape, it is the
+absolute working-set size of Air relative to the macOS kernel
+wired-memory limit on this 128 GB M5 Max. The fix, if Air
+becomes important enough to pursue, is the kernel parameter
+bump documented above, combined with continued accumulation of
+panic-stability evidence post-macOS 26.5.1.
+
+### Files committed for this entry
+
+- `eval/results/2026-06-23T08-22-50Z/raw.jsonl` (the partial
+  sweep, kept for diagnostic transparency)
+- `eval/results/2026-06-23T08-22-50Z/run_meta.json`
+- `.gitignore` carveout for the directory above
+
+The 16 partial-sweep cells are NOT a valid Air evaluation sample
+and any future reader should treat them as diagnostic only, not
+evaluative. The journal entry above is the canonical statement
+of what this sweep does and does not tell us.
+
+### What this experiment closed
+
+- Q (implicit): "Can Air run on Cedant where it couldn't on
+  tst_llm?" Answer at current kernel limit: no.
+- Q (implicit): "Is Flash a viable Gemma replacement under
+  D015's documented criteria?" Answer: no, by 3 hallucinations.
+
+### What this experiment opened (backlog)
+
+- If the kernel wired-memory limit can be safely raised after
+  more macOS Tahoe 26.5.1 stability evidence accumulates, an
+  Air sweep on Cedant becomes feasible. Not currently
+  scheduled; depends on whether GLM-family models matter enough
+  to Cedant's roadmap to justify the kernel-parameter work.
+- A softer hallucination criterion for D015 (e.g., "rate < 5%")
+  would admit Flash as a candidate. This is a deliberate
+  D-decision, not a research question; not pursued here.
+
+### Branch state
+
+`v2.0-dev/glm-model-survey` HEAD will be at the commit landing
+this entry. The branch carries:
+
+- `feat(eval): --max-tokens CLI flag on eval.runner` (ecea02f)
+- `docs: pre-register GLM model survey on v2.0-dev/glm-model-survey` (0e6b500)
+- `docs+eval: GLM-4.7-Flash-6bit sweep result, not a Gemma replacement` (75323d0)
+- This commit: Air closure.
+
+The branch is complete as a coherent research arc and can be
+merged or left to stand as a record of an experiment whose
+outcome was "current production stays."

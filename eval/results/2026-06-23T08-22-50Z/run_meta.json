@@ -1,0 +1,20 @@
+{
+  "completed": true,
+  "timestamp_utc": "2026-06-23T08-22-50Z",
+  "elapsed_seconds": 1133.65,
+  "models": [
+    "GLM-4.5-Air-6bit"
+  ],
+  "prompts": [
+    "v2"
+  ],
+  "benchmark_path": "eval/benchmark.toml",
+  "question_count": 70,
+  "total_cells": 70,
+  "error_cells": 54,
+  "top_k": 5,
+  "limit": null,
+  "question_ids": null,
+  "use_hyde": false,
+  "max_tokens": 2048
+}
