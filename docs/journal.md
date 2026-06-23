@@ -2267,3 +2267,124 @@ model-survey question more precisely.
 Will be written *after* Flash's sweep completes (or fails). No
 intermediate journal updates unless something surprising happens
 mid-sweep (kernel panic, oMLX disconnect, etc.).
+
+## 2026-06-23 — GLM model survey: Flash sweep result
+
+Flash sweep completed at 2026-06-23T07-59-49Z. 70/70 cells, 0
+errored, 516.9s wall-clock (8m 37s). Hardware checkpoint passes:
+panic file count unchanged at 2 (baseline 2026-06-20 and
+2026-06-21 still the only entries). Output at
+`eval/results/2026-06-23T07-59-49Z/`.
+
+### Pre-registered verdict: NOT a Gemma replacement
+
+Criterion 1 (zero hallucinated citations) fails. The other two
+criteria pass. Per the conjunctive pre-registration, that is a
+disqualification.
+
+| Criterion | Result | Pass/Fail |
+|---|---|---|
+| 1. Zero hallucinated citations | 3 hallucinations across N=44 | FAIL |
+| 2. All 26 refusals correctly refused | 26/26 | PASS |
+| 3. mean_citation_recall within 10pp of Gemma's 0.621 | 0.572 (-4.9pp) | PASS |
+
+### Reconciliation against pre-registered predictions
+
+Predictions stated 2026-06-23 before evidence:
+
+- Criterion 1: 50% confidence. **Falsified to the negative side.**
+  Evidence: 3 hallucinations on N=44 answerable.
+- Criterion 2: 70% confidence. **Confirmed.** 26/26 refusals
+  correctly refused with exact phrase.
+- Criterion 3: 50% confidence. **Confirmed.** Mean recall 0.572,
+  delta -4.9pp, comfortably within the 10pp tolerance.
+
+Net: 2 of 3 predictions confirmed, the one with lowest confidence
+falsified to the negative side. Predictions calibrated honestly
+against evidence.
+
+### The three hallucinations
+
+All three cited `chunk_id` values were not in the retrieved set
+for the question:
+
+- **q008**: `eiopa_guidelines_system_of_governance__0012__guideline-12-proper-requirements`
+- **q009**: `eiopa_guidelines_system_of_governance__0046__intra-group-outsourcing`
+- **q052**: `munich_re_sustainability_2024__0263__sustainability-report-2024`
+
+Two of three are EIOPA chunks; one is Munich Re. All three are
+real chunk_ids that exist in the corpus — the model is not
+inventing chunk_ids from nothing. It is selecting chunk_ids from
+its training-data knowledge of the corpus structure rather than
+from the retrieved context. This is a *grounded* hallucination
+pattern, qualitatively different from random ID synthesis but
+still a refusal-contract violation by Cedant's definition.
+
+The three cells had recall=1.00, 1.00, 0.50 respectively before
+counting hallucinations — so the model is finding the gold AND
+adding adjacent-document confabulations. This is the
+distinctive failure mode: not gap-filling, but
+context-supplementing.
+
+### Quantitative comparison vs Gemma and Qwen v2
+
+Comparison anchor is the 2026-06-18 canonical sweep
+(`eval/results/2026-06-18T15-32-07Z/`) at Gemma 1024 / Qwen 1024.
+Flash ran at 2048 token budget per the pre-registration's
+architecturally-appropriate framing.
+
+| Model | mean_citation_recall | hallucinations | refusal_correct | latency_answerable |
+|---|---|---|---|---|
+| Gemma 4 31B IT (canonical) | 0.598 -> 0.621 Q15 | 0 | 26/26 | ~22.9s |
+| Qwen3.6-35B-A3B-4bit v2 (canonical) | 0.545 -> ~0.567 | 7 | 26/26 | ~3.4s |
+| GLM-4.7-Flash-6bit v2 | 0.572 | 3 | 26/26 | 9.2s |
+
+Flash sits between Gemma and Qwen on every axis:
+- Recall: Gemma > Flash > Qwen
+- Hallucinations: Gemma < Flash < Qwen
+- Latency: Qwen < Flash < Gemma
+
+Flash is a *middle-ground* model — strictly better than Qwen on
+hallucinations but not at Gemma's zero floor; faster than Gemma
+but not at Qwen's speed; recall-competitive with both.
+
+### What this means
+
+Under D015's documented criterion (zero hallucinated citations
+across the answerable sweep), Flash is disqualified. The
+pre-registration was conjunctive deliberately — recall and speed
+do not compensate for hallucinations in a regulatory-content
+copilot. A reviewer who reads the answer relies on the citation
+brackets to mark verifiable claims; hallucinated citations
+present a false trail to verify.
+
+If Cedant ever revisits D015 with a softer hallucination criterion
+(e.g., "rate < 5% on answerable"), Flash becomes a candidate with
+real advantages on latency. That is a future D-decision, not this
+one.
+
+### Diagnostic detail worth noting
+
+Retrieval recall on Flash is 0.655 — identical to Gemma's
+Q15-corrected baseline (0.655). The retrieval channel does the
+same thing in both runs (same retriever, same benchmark, same
+top-k). Flash's citation recall gap of -4.9pp comes entirely
+from the model's citation-selection behaviour, not from a
+retrieval difference. The model is shown the same chunks Gemma
+sees and chooses slightly different subsets to cite.
+
+### Files committed for this entry
+
+None at the moment beyond the raw sweep output:
+- `eval/results/2026-06-23T07-59-49Z/raw.jsonl`
+- `eval/results/2026-06-23T07-59-49Z/run_meta.json`
+
+`scratch/flash_readout.py` exists locally for re-running the
+criteria check; not committed (scratch/ is gitignored per D005).
+
+### Next
+
+Pause for panic-file check confirmed clean. Run Air per the
+pre-registered order. Air's result will determine whether the
+hallucination behaviour is a Flash-specific property or a
+GLM-family pattern.
