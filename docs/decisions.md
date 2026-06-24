@@ -1157,3 +1157,88 @@ artifact. The current honest framing is: Gemma carries a consistent
 hallucination floor difference; Qwen carries a ~6× latency advantage.
 For an analyst-research deployment the quality edges accumulate to a
 clearer recommendation than the Day 3 framing supported.
+
+---
+
+## D016 — HTTP client convention: raw httpx in both modules, OpenAI SDK migration deferred
+
+**Date:** 2026-06-23
+**Status:** Decided
+**Relates to:** Q14 / HyDE infrastructure (Phase 2b)
+
+When `query_rewriter.py` was added on 2026-06-20 (v2.0-dev/q13-hyde-spike,
+commit `65b26b5`) to support the Q14 HyDE experiment, it needed an HTTP
+client to call the local oMLX endpoint for passage generation. The
+existing `answer.py` module already calls the same endpoint via raw
+`httpx`. Two viable options:
+
+- **Option A — Match `answer.py`:** use raw `httpx` in `query_rewriter.py`,
+  manual JSON payload assembly, manual response parsing. Same shape as
+  `answer.py`, two modules using the same HTTP convention.
+- **Option B — Adopt the OpenAI Python SDK:** cleaner client surface,
+  typed responses, built-in retries, less manual JSON handling. But the
+  module would diverge stylistically from `answer.py`.
+- **Option C — Adopt the SDK in both modules:** rewrite `answer.py` to use
+  the OpenAI SDK at the same time as introducing `query_rewriter.py`.
+  Larger refactor, but house-style consistency preserved.
+
+**Decision: Option A.** `query_rewriter.py` uses raw `httpx`, matching
+`answer.py`'s convention. SDK migration of both modules is deferred to
+the v2.0 release boundary.
+
+### Rationale
+
+**House-style inconsistency between two modules hitting the same endpoint
+would be hard to defend to a reviewer.** A reviewer reading the v2 branch
+sees `answer.py` constructing JSON payloads manually and `query_rewriter.py`
+using `openai.OpenAI().chat.completions.create(...)`. The natural question
+is "why two different patterns for the same external dependency?" — and
+the honest answer would be "we added the SDK for new code but didn't
+retrofit the old code." That's a code-quality smell that costs more to
+explain than the SDK saves.
+
+**The SDK's benefits are real but not load-bearing for a 5-day artefact.**
+Typed responses, built-in retries, cleaner client: all useful, none
+necessary for code whose only job is one POST per call to a known-local
+endpoint. The raw `httpx` pattern in `answer.py` is 30 lines, well-tested,
+and the project's tests use `httpx.MockTransport` to mock it cleanly. The
+same testability extends to `query_rewriter.py` via the same transport
+hook (see `query_rewriter.py` line 117 — `transport: httpx.BaseTransport |
+None = None` parameter exists primarily for `httpx.MockTransport` in
+tests).
+
+**The v2.0 release boundary is the natural migration point.** If v2.0
+ships a partial-HyDE production system (deferred decision, Q14 falsified
+but partial HyDE shows aggregate gain), the SDK migration becomes part
+of that release's scope rather than slipped into an exploratory branch.
+Migrating both modules together preserves the consistency this decision
+prioritises.
+
+### Trade-offs
+
+- **Accepted:** Manual JSON payload construction and response parsing in
+  `query_rewriter.py`. ~10-15 lines that the SDK would have handled
+  invisibly. Tested with 18 dedicated tests; no observed defects.
+- **Accepted:** Two modules using the same HTTP convention will both
+  need migrating at v2.0 release if the SDK becomes attractive. Cost:
+  ~1-2 hours of refactor work, contained scope.
+- **Avoided:** Two HTTP conventions in the same codebase, one of which
+  would be the new convention bolted on top of the old one. Reviewer-
+  hostile and would invite the wrong kind of "why didn't you migrate
+  both" question.
+
+### Cross-link to D013
+
+D013 set `answer.py`'s design contracts including its raw `httpx` usage.
+D016 extends that convention to `query_rewriter.py`. Future-D-decision
+that migrates both modules to the OpenAI SDK would be a deliberate
+revision of D013's HTTP-client choice, not just an addition.
+
+### When to revisit
+
+At the v2.0 release boundary. The questions then will be: (a) does v2.0
+ship HyDE in production (which keeps `query_rewriter.py` load-bearing),
+and (b) do the SDK's benefits (retries, typed responses) become more
+attractive once we're past the 5-day budget that justified the
+minimal-dependency posture. If both answers are yes, migrate both modules
+together. If either is no, the raw `httpx` convention stays.
