@@ -185,6 +185,18 @@ class QuestionScore:
     ``retrieved_chunk_ids``) are kept for debugging and for any future
     rescoring against a richer metric (e.g., LLM-judged claim alignment
     per Q10.3).
+
+    Per-channel rank arrays (``retrieved_dense_ranks``,
+    ``retrieved_sparse_ranks``) are parallel to ``retrieved_chunk_ids`` —
+    same length, same order. Each entry is the 1-based rank of that
+    chunk within its channel's candidate list, or ``None`` if the chunk
+    did not appear in that channel. Useful for diagnosing fusion
+    behaviour: when a gold chunk is missed despite being retrieved by
+    one channel, comparing the per-channel ranks of what was surfaced
+    vs what gold expected localises the failure to dense, sparse, or
+    fusion. Opened as backlog after Phase 2c (Q14 falsification) when
+    the sparse-interference hypothesis on q051 couldn't be settled
+    without per-channel rank data.
     """
 
     # Identifiers
@@ -221,6 +233,11 @@ class QuestionScore:
     hallucinated_citations: list[str]
     gold_chunk_ids: list[str]
     retrieved_chunk_ids: list[str]
+    # Per-channel ranks: parallel arrays to retrieved_chunk_ids.
+    # Each entry is the 1-based rank in that channel, or None if the
+    # chunk did not appear in that channel's candidate list.
+    retrieved_dense_ranks: list[int | None]
+    retrieved_sparse_ranks: list[int | None]
 
 
 def score_question(
@@ -236,6 +253,8 @@ def score_question(
     ``total_citations_count`` for context.
     """
     retrieved_ids = [h.chunk_id for h in result.used_chunks]
+    retrieved_dense_ranks = [h.dense_rank for h in result.used_chunks]
+    retrieved_sparse_ranks = [h.sparse_rank for h in result.used_chunks]
     unique_cited = list(dict.fromkeys(result.citations))
 
     recall = score_citation_recall(unique_cited, question.gold_chunk_ids)
@@ -268,6 +287,8 @@ def score_question(
         hallucinated_citations=list(result.hallucinated_citations),
         gold_chunk_ids=list(question.gold_chunk_ids),
         retrieved_chunk_ids=retrieved_ids,
+        retrieved_dense_ranks=retrieved_dense_ranks,
+        retrieved_sparse_ranks=retrieved_sparse_ranks,
     )
 
 

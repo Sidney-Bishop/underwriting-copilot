@@ -41,8 +41,8 @@ from eval.scorer import BenchmarkQuestion, score_question
 # ============================================================================
 
 
-def _fake_hit(chunk_id: str):
-    return SimpleNamespace(chunk_id=chunk_id)
+def _fake_hit(chunk_id: str, dense_rank: int | None = None, sparse_rank: int | None = None):
+    return SimpleNamespace(chunk_id=chunk_id, dense_rank=dense_rank, sparse_rank=sparse_rank)
 
 
 def _fake_answer_result(

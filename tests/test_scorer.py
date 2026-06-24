@@ -296,9 +296,14 @@ category = "x"
 # ============================================================================
 
 
-def _fake_hit(chunk_id: str):
-    """Minimal stand-in for RetrievalHit — only ``chunk_id`` is read."""
-    return SimpleNamespace(chunk_id=chunk_id)
+def _fake_hit(chunk_id: str, dense_rank: int | None = None, sparse_rank: int | None = None):
+    """Minimal stand-in for RetrievalHit — chunk_id plus optional per-channel ranks.
+
+    ``dense_rank`` and ``sparse_rank`` default to ``None`` for tests that
+    don't care about fusion behaviour. Tests that need to assert
+    per-channel rank plumbing can pass explicit values.
+    """
+    return SimpleNamespace(chunk_id=chunk_id, dense_rank=dense_rank, sparse_rank=sparse_rank)
 
 
 def _fake_answer_result(
